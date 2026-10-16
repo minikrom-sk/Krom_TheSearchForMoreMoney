@@ -92,21 +92,27 @@ local function auctionatorDayZero()
 end
 
 -- Which realm table(s) in Auctionator's database belong to this realm.
+-- Auctionator files prices under the "root" of your connected realms (the
+-- first name GetAutoCompleteRealms gives), which on Forever isn't your
+-- realm's name - "Classic Beta PvE 2" lives under "PvE". So try that first.
+local function norm(s) return (tostring(s or ""):lower():gsub("[%s%-']", "")) end
 local function realmTables(db)
-  local realm = (GetRealmName() or ""):lower():gsub("[%s%-']", "")
-  local faction = (UnitFactionGroup("player") or ""):lower()
-  local exact, loose = {}, {}
-  for key, t in pairs(db) do
-    if type(key) == "string" and key:sub(1, 2) ~= "__" and (type(t) == "table" or type(t) == "string") then
-      local k = key:lower():gsub("[%s%-']", "")
-      if k == realm or k == realm .. faction or k == realm .. "_" .. faction then
-        exact[#exact + 1] = { key, t }
-      elseif k:find(realm, 1, true) then
-        loose[#loose + 1] = { key, t }
+  local wanted = {}
+  local connected = GetAutoCompleteRealms and GetAutoCompleteRealms() or {}
+  if type(connected) == "table" then for _, r in ipairs(connected) do wanted[#wanted + 1] = norm(r) end end
+  wanted[#wanted + 1] = norm(GetRealmName())
+  local faction = norm(UnitFactionGroup("player"))
+  for _, want in ipairs(wanted) do
+    for key, t in pairs(db) do
+      if type(key) == "string" and key:sub(1, 2) ~= "__" and (type(t) == "table" or type(t) == "string") then
+        local k = norm(key)
+        if k == want or k == want .. faction or k == want .. "_" .. faction then
+          return { { key, t } }
+        end
       end
     end
   end
-  return #exact > 0 and exact or loose
+  return {}
 end
 
 local function itemIDFromKey(key)
@@ -190,7 +196,7 @@ function ns.importAuctionator(dryRun)
   if dryRun then
     say(("would import %d prices for %d items."):format(prices, items))
   else
-    say(("imported %d prices for %d items from Auctionator (last %d days)."):format(prices, items, ns.opt("keepDays", 90)))
+    say(("imported %d prices for %d items from Auctionator's \"%s\" data (last %d days)."):format(prices, items, realms[1][1], ns.opt("keepDays", 90)))
     Krom_TheSearchForMoreMoneyDB.importedAuctionator = ns.now()
     if ns.onNewData then ns.onNewData() end
   end
