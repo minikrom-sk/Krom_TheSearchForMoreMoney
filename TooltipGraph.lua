@@ -9,8 +9,8 @@
 local ADDON, ns = ...
 local opt, money = ns.opt, ns.money
 
-local DAYS, W_MIN, H = 7, 220, 92
-local GX, GTOP, GBOT = 8, 22, 18 -- graph inset: left/right, top, bottom
+local DAYS, W_MIN, H = 7, 220, 106
+local GX, GTOP, GBOT = 8, 36, 18 -- graph inset: left/right, top, bottom
 local BLUE = { 0.2, 0.8, 1 }
 local COPPER = { 0.93, 0.55, 0.25 }
 local VOLC = { 0.62, 0.5, 0.95 }
@@ -32,9 +32,15 @@ ns.tipGraph = f
 local head = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 head:SetPoint("TOPLEFT", 8, -7)
 head:SetJustifyH("LEFT")
+local ratioText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+ratioText:SetPoint("TOPRIGHT", -8, -7)
+ratioText:SetJustifyH("RIGHT")
+-- the verdict gets its own line so long ones never collide
 local verdict = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-verdict:SetPoint("TOPRIGHT", -8, -7)
-verdict:SetJustifyH("RIGHT")
+verdict:SetPoint("TOPLEFT", 8, -20)
+verdict:SetPoint("RIGHT", -8, 0)
+verdict:SetJustifyH("LEFT")
+verdict:SetWordWrap(false)
 local footL = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
 footL:SetPoint("BOTTOMLEFT", 8, 5)
 local footR = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
@@ -161,9 +167,10 @@ local function draw(itemID)
   local ratio = ""
   if vendor then
     local x = latest[2] / vendor
-    ratio = ("  |cffcccccc%sx vendor|r"):format(x >= 10 and ("%d"):format(x) or ("%.1f"):format(x))
+    ratio = ("|cffcccccc%sx vendor|r"):format(x >= 10 and ("%d"):format(x) or ("%.1f"):format(x))
   end
-  head:SetText(("|cff33ccff%s|r %s%s"):format(money(latest[2]), age == 0 and "today" or (age .. "d ago"), ratio))
+  ratioText:SetText(ratio)
+  head:SetText(("|cff33ccff%s|r %s"):format(money(latest[2]), age == 0 and "today" or (age .. "d ago")))
   local col, word = ns.verdict(latest[2], vendor, itemID)
   verdict:SetText(col and (col .. word .. "|r") or "|cff999999no vendor price|r")
   footL:SetText(ns.dayLabel(first))
