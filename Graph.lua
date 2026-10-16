@@ -59,8 +59,14 @@ end
 function ns.addView(name, label, frame, onShow)
   ns.views[name] = { frame = frame, onShow = onShow }
   local t = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-  t:SetSize(90, 22)
-  t:SetPoint("TOPLEFT", panel, "BOTTOMLEFT", 8 + #tabs * 94, 2)
+  t:SetSize(96, 22)
+  -- tabs sit in the header, top right (under the panel they ran off the screen)
+  local prev = tabs[#tabs]
+  if prev then
+    prev:ClearAllPoints()
+    prev:SetPoint("TOPRIGHT", t, "TOPLEFT", -4, 0)
+  end
+  t:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -46, -14)
   t:SetText(label)
   t.view = name
   t:SetScript("OnClick", function() ns.showView(name) end)
@@ -85,12 +91,12 @@ icon:SetSize(32, 32)
 icon:SetPoint("TOPLEFT", 14, -12)
 local title = gv:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
 title:SetPoint("TOPLEFT", icon, "TOPRIGHT", 8, -1)
-title:SetPoint("RIGHT", -60, 0)
+title:SetPoint("RIGHT", -260, 0)
 title:SetJustifyH("LEFT")
 title:SetWordWrap(false)
 local subtitle = gv:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 subtitle:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -3)
-subtitle:SetPoint("RIGHT", -16, 0)
+subtitle:SetPoint("RIGHT", -260, 0)
 subtitle:SetJustifyH("LEFT")
 
 local lock = CreateFrame("Button", nil, gv)
@@ -325,12 +331,15 @@ local function drawRow(row, head, names, short, pct, count, unit, waiting)
     end
   end
   row.mid:SetShown(count > 0)
-  if count == 0 or not lo or lo == hi then
+  if count > 0 and lo and (lo == hi or math.abs(pct[hi] - pct[lo]) < 1) then
+    row.title:SetText(head .. "  " .. confidence(count, unit))
+    row.headline:SetText("|cff999999No difference so far - same price each time.|r")
+  elseif count == 0 or not lo then
     row.title:SetText(head)
     row.headline:SetText("|cff999999" .. waiting .. "|r")
   else
     row.title:SetText(head .. "  " .. confidence(count, unit))
-    row.headline:SetText(("Buy on |cff66ee66%s|r (%.0f%%), sell on |cffff7766%s|r (+%.0f%%)."):format(
+    row.headline:SetText(("Buy |cff66ee66%s|r (%.0f%%), sell |cffff7766%s|r (+%.0f%%)."):format(
       short[lo], pct[lo], short[hi], pct[hi]))
   end
 end
@@ -487,9 +496,9 @@ end
 ns.pattern = pattern
 
 local TOD_NAMES = { "Night |cff7777770-6|r", "Morning |cff7777776-12|r", "Afternoon |cff77777712-18|r", "Evening |cff77777718-24|r" }
-local TOD_SHORT = { "nights", "mornings", "afternoons", "evenings" }
+local TOD_SHORT = { "at night", "in the mornings", "in the afternoons", "in the evenings" }
 local DOW_NAMES = { "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" }
-local DOW_SHORT = { "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays", "Sundays" }
+local DOW_SHORT = { "on Mondays", "on Tuesdays", "on Wednesdays", "on Thursdays", "on Fridays", "on Saturdays", "on Sundays" }
 
 local function drawPatterns(itemID)
   -- time of day: every quarter-day price we've kept (30 days)
