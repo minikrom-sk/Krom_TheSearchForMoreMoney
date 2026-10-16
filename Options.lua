@@ -91,8 +91,7 @@ local function buildOptions()
     info:SetText(("%s: %d items, %d daily prices. Neutral AH: %d items, %d prices. Kept for %d days."):format(ns.realmKey("faction"), n, pts, nn, np, opt("keepDays", 90)))
   end
   y = y - 22
-  button("Full scan now (AH open)", 190, 28, function() ns.startFullScan() end)
-  button("Import from Auctionator", 190, 228, function() if ns.importAuctionator then ns.importAuctionator() end end)
+  button("Import from Auctionator", 190, 28, function() if ns.importAuctionator then ns.importAuctionator() end end)
   y = y - 34
 
   -- ---------------- Crew sync ----------------
@@ -178,7 +177,7 @@ local function buildOptions()
   help:SetJustifyH("LEFT")
   help:SetSpacing(3)
   help:SetText("|cffffd100How it works|r  Every Auction House search you (or Auctionator) make records each item's\n" ..
-               "lowest price for the day. Full scans record everything at once.\n\n" ..
+               "lowest price for the day. Full scans (the button on the price graph, or /money scan) record everything at once.\n\n" ..
                "|cffffd100Graph|r  Opens beside the Auction House. It follows what you search or hover; the lock\n" ..
                "keeps it on one item. Hover a point for the date and price.\n\n" ..
                "|cffffd100Commands|r  /money  /money <item link>  /money scan  /money sync  /money add Name  /money remove Name\n" ..
@@ -257,7 +256,7 @@ SlashCmdList.KROMMOREMONEY = function(msg)
   elseif cmd == "" then
     if ns.panel:IsShown() then ns.panel:Hide() else ns.showPanel() end
   elseif cmd == "scan" then
-    ns.startFullScan()
+    if ns.startFullScan() then ns.lastFullScan = GetTime() end
   elseif cmd == "sync" then
     ns.syncNow(false)
   elseif cmd == "add" then

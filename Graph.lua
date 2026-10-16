@@ -122,6 +122,44 @@ for i, days in ipairs(RANGES) do
   rangeBtns[i] = b
 end
 
+-- Full scan button (lives here because opening Options closes the AH)
+local SCAN_COOLDOWN = 15 * 60
+local scanBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+scanBtn:SetSize(86, 18)
+scanBtn:SetPoint("TOPRIGHT", -14, -48)
+scanBtn:SetText("Full scan")
+local function scanLeft()
+  return ns.lastFullScan and math.max(0, SCAN_COOLDOWN - (GetTime() - ns.lastFullScan)) or 0
+end
+local function updateScanBtn()
+  local ah = ns.ahFrame() and ns.ahFrame():IsShown()
+  local left = scanLeft()
+  if left > 0 then
+    scanBtn:SetText(("%d:%02d"):format(math.floor(left / 60), math.floor(left % 60)))
+  else
+    scanBtn:SetText("Full scan")
+  end
+  scanBtn:SetEnabled(ah and left == 0 and true or false)
+end
+local tick = 0
+scanBtn:SetScript("OnUpdate", function(_, e)
+  tick = tick + e
+  if tick >= 0.5 then tick = 0; updateScanBtn() end
+end)
+scanBtn:SetScript("OnClick", function()
+  if ns.startFullScan() then ns.lastFullScan = GetTime() end
+  updateScanBtn()
+end)
+scanBtn:SetScript("OnEnter", function(self)
+  GameTooltip:SetOwner(self, "ANCHOR_TOP")
+  GameTooltip:AddLine("Full scan")
+  GameTooltip:AddLine("Records the lowest price of everything on the Auction House. The game allows one every 15 minutes.", 1, 1, 1, true)
+  if scanLeft() > 0 then GameTooltip:AddLine("Ready again when the timer runs out.", 1, 0.8, 0.2, true) end
+  if not (ns.ahFrame() and ns.ahFrame():IsShown()) then GameTooltip:AddLine("Open the Auction House first.", 1, 0.3, 0.3, true) end
+  GameTooltip:Show()
+end)
+scanBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
 -- Pools for line segments and hover points
 local lines, dots = {}, {}
 local function getLine(i)

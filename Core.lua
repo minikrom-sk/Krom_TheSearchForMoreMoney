@@ -276,19 +276,22 @@ end
 
 -- Start a full scan (the AH only allows one every 15 minutes).
 function ns.startFullScan()
-  if not (ns.ahFrame() and ns.ahFrame():IsShown()) then say("open the Auction House first."); return end
+  if not (ns.ahFrame() and ns.ahFrame():IsShown()) then say("open the Auction House first."); return false end
   if modernAH() and C_AuctionHouse.ReplicateItems then
     fullScan.active, fullScan.kind, fullScan.lastReplicate = true, "modern", nil
     C_AuctionHouse.ReplicateItems()
     say("full scan started - this can take a moment.")
+    return true
   elseif QueryAuctionItems then
     local _, canAll = CanSendAuctionQuery()
-    if not canAll then say("the Auction House only allows a full scan every 15 minutes."); return end
+    if not canAll then say("the Auction House only allows a full scan every 15 minutes."); return false end
     fullScan.active, fullScan.kind = true, "classic"
     QueryAuctionItems("", nil, nil, 0, nil, nil, true, false, nil)
     say("full scan started - the game may freeze for a few seconds while it loads.")
+    return true
   else
     say("couldn't find a way to scan the Auction House on this client.")
+    return false
   end
 end
 
