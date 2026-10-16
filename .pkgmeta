@@ -3,3 +3,5 @@ package-as: Krom_TheSearchForMoreMoney
 ignore:
   - README.md
   - VERSION
+  - CLAUDE.md
+  - tools
