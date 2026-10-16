@@ -378,7 +378,8 @@ local function onCommodity(itemID)
     local okq, q = pcall(C_AuctionHouse.GetCommoditySearchResultsQuantity, itemID)
     if okq then ns.recordVolume(itemID, q) end
   end
-  ns.focus(itemID, "search")
+  if not ns.rechecking then ns.focus(itemID, "search") end
+  if ns.onSearchResult then ns.onSearchResult(itemID) end
   notify(itemID)
   batchDone()
 end
@@ -397,7 +398,8 @@ local function onItemSearch(itemKey)
   if ns.recordLadder(itemKey.itemID, ladder) then recorded = recorded + 1 end
   refreshLastScan(itemKey.itemID, ladder)
   ns.recordVolume(itemKey.itemID, qty)
-  ns.focus(itemKey.itemID, "search")
+  if not ns.rechecking then ns.focus(itemKey.itemID, "search") end
+  if ns.onSearchResult then ns.onSearchResult(itemKey.itemID) end
   notify(itemKey.itemID)
   batchDone()
 end

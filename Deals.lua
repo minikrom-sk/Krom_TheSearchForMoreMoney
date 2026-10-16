@@ -36,12 +36,17 @@ subtitle:SetJustifyH("LEFT")
 
 local scanBtn = ns.makeScanButton(view)
 scanBtn:SetPoint("TOPRIGHT", -16, -50)
+local recheckBtn = CreateFrame("Button", nil, view, "UIPanelButtonTemplate")
+recheckBtn:SetSize(90, 20)
+recheckBtn:SetPoint("TOP", scanBtn, "BOTTOM", 0, -4)
+recheckBtn:SetText("Recheck")
 
 -- Category filter buttons (built from what the scan found)
 local catBtns = {}
 local catBar = CreateFrame("Frame", nil, view)
 catBar:SetPoint("TOPLEFT", 16, -50)
 catBar:SetPoint("RIGHT", scanBtn, "LEFT", -8, 0)
+-- (the Recheck button sits under Full scan, beside the second row of categories)
 catBar:SetHeight(44)
 
 -- Column headers
@@ -331,6 +336,91 @@ list:SetScript("OnMouseWheel", function(_, delta)
   offset = offset - delta * 3
   redrawList()
 end)
+
+-- ---------------------------------------------------------------------------
+-- Recheck: re-search each deal on the list, one at a time, to see what's
+-- still there. Plays by the AH's rules: one search in flight, only when the
+-- game says the AH is ready for another (IsThrottledMessageSystemReady),
+-- a short pause between searches, a cap on how many, and only when you
+-- click the button. Buying is never automated.
+-- ---------------------------------------------------------------------------
+local RECHECK_MAX, GAP, TIMEOUT = 40, 0.4, 5
+local queue, qi, waitingFor, sentAt, lastDone, checkedCount = {}, 0, nil, 0, 0, 0
+local runner = CreateFrame("Frame")
+runner:Hide()
+
+local function stopRecheck(msg)
+  runner:Hide()
+  ns.rechecking = false
+  waitingFor = nil
+  recheckBtn:SetText("Recheck")
+  if msg then ns.say(msg) end
+  if ns.onScanUpdated then ns.onScanUpdated() end
+end
+
+local function canSearch()
+  if not (C_AuctionHouse and C_AuctionHouse.SendSearchQuery) then return false end
+  if C_AuctionHouse.IsThrottledMessageSystemReady and not C_AuctionHouse.IsThrottledMessageSystemReady() then return false end
+  return true
+end
+
+runner:SetScript("OnUpdate", function()
+  local now = GetTime()
+  if not (AuctionHouseFrame and AuctionHouseFrame:IsShown()) then return stopRecheck("recheck stopped - the Auction House closed.") end
+  if waitingFor then
+    if now - sentAt < TIMEOUT then return end
+    waitingFor = nil -- no answer; move on
+  end
+  if now - lastDone < GAP or not canSearch() then return end
+  qi = qi + 1
+  local d = queue[qi]
+  if not d then
+    return stopRecheck(("rechecked %d item%s."):format(checkedCount, checkedCount == 1 and "" or "s"))
+  end
+  recheckBtn:SetText(("Stop %d/%d"):format(qi, #queue))
+  local ok = pcall(function()
+    local key = C_AuctionHouse.MakeItemKey(d.id)
+    local sorts = { { sortOrder = Enum.AuctionHouseSortOrder.Price, reverseSort = false } }
+    C_AuctionHouse.SendSearchQuery(key, sorts, true)
+  end)
+  if ok then waitingFor, sentAt = d.id, now else lastDone = now end
+end)
+
+ns.onSearchResult = function(itemID)
+  if ns.rechecking and itemID == waitingFor then
+    waitingFor = nil
+    lastDone = GetTime()
+    checkedCount = checkedCount + 1
+  end
+end
+
+local function startRecheck()
+  if not (AuctionHouseFrame and AuctionHouseFrame:IsShown()) then
+    ns.say(AuctionFrame and AuctionFrame:IsShown() and "recheck needs the modern Auction House." or "open the Auction House first.")
+    return
+  end
+  wipe(queue)
+  for _, dl in ipairs(filtered()) do
+    if #queue >= RECHECK_MAX then break end
+    queue[#queue + 1] = dl
+  end
+  if #queue == 0 then ns.say("nothing to recheck."); return end
+  qi, waitingFor, lastDone, checkedCount = 0, nil, 0, 0
+  ns.rechecking = true
+  runner:Show()
+end
+
+recheckBtn:SetScript("OnClick", function()
+  if ns.rechecking then stopRecheck("recheck stopped.") else startRecheck() end
+end)
+recheckBtn:SetScript("OnEnter", function(self)
+  GameTooltip:SetOwner(self, "ANCHOR_TOP")
+  GameTooltip:AddLine("Recheck")
+  GameTooltip:AddLine(("Searches each deal shown (top %d) again, one at a time at the pace the Auction House allows, and drops the ones that are gone. Click again to stop."):format(RECHECK_MAX), 1, 1, 1, true)
+  GameTooltip:Show()
+end)
+recheckBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+view:SetScript("OnHide", function() if ns.rechecking then stopRecheck() end end)
 
 local function refresh()
   compute()
