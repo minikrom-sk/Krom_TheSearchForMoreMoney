@@ -216,3 +216,12 @@ end
 print("searches sent:", table.concat(sent, ","), "rechecking now:", A.rechecking)
 local deals = A.computeDeals()
 print("deals left after recheck:", #deals)
+-- weekly rollup + all-time range
+local rd2 = A.realmData()
+for d = 100, 200 do A.record(77, 1000 + d, DAY - d); A.recordMarket(77, 900 + d, DAY - d) end
+A.prune()
+local wk = rd2.weekly[77]; local nweeks = 0 for _ in pairs(wk) do nweeks = nweeks + 1 end
+print("weekly weeks kept:", nweeks, "daily left:", (function() local n=0 for _ in pairs(rd2.items[77] or {}) do n=n+1 end return n end)())
+A.record(77, 1500, DAY); A.focusID = 77
+for _, r in ipairs({0, 1, 3}) do A_env.Krom_TheSearchForMoreMoneyDB.range = r; print("range", r, pcall(A.redraw)) end
+local h = A.history(77); print("history points:", #h, "first weekly:", h[1][4], h[1][2])

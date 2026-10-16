@@ -34,7 +34,7 @@ crew. Auction House price history with graphs, a Deals scanner, and crew sync.
   (modern browse/commodity/item search/ReplicateItems full scan; classic list + getAll),
   `ns.marketValue` (TSM-style), `ns.lastScan` (full-scan listings, session only),
   neutral AH detection, `ns.startFullScan`.
-- **Graph.lua** - the panel (docks right of the AH, AH height, 520 wide), the view/tab system
+- **Graph.lua** - the panel (docks right of the AH, top-aligned, AH height + 130, 620 wide; ranges 1/3/7/14/30/90/All), the view/tab system
   (`ns.addView`, `ns.showView`), price graph view, `ns.makeScanButton`, tooltip line.
 - **Deals.lua** - "Under vendor price" tab: listings below vendor sell price from the last full
   scan, category filters, click = open on AH, right-click = graph, throttled Recheck sweep.
@@ -48,7 +48,9 @@ crew. Auction House price history with graphs, a Deals scanner, and crew sync.
 - `market[itemID][day]` = lowest market value that day (the graph line).
 - `slots[itemID][slot]` = market value per local quarter-day (6h), kept 30 days (time-of-day chart).
 - `vol[itemID][day]` = most units seen listed that day (volume bars).
-- Pruned after `keepDays` (90). Also: `whitelist`, `houseOverride[npcID]`, `range`, `view`, `minimap`, options.
+- `weekly[itemID][week]` (+ `weeklyN`) = average price per Monday-Sunday week, rolled up from days
+  as they pass `keepDays` (90) and kept forever (the "All" range). week = floor((day+3)/7).
+- Daily data pruned after `keepDays` (90). Also: `whitelist`, `houseOverride[npcID]`, `range`, `view`, `minimap`, options.
 
 Market value: cheapest 15% of quantity, extend to 30% while each step <= +20%, drop >1.5 sd
 outliers, quantity-weighted mean. Lowest-wins everywhere, so merges/sync are order-free.

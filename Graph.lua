@@ -12,10 +12,11 @@
 local ADDON, ns = ...
 local opt, say, money = ns.opt, ns.say, ns.money
 
-local W, H = 520, 540        -- panel size when not docked (docked: AH height)
+local W, H = 620, 640        -- panel size when not docked (docked: AH height + EXTRA_H)
+local EXTRA_H = 130          -- docked: how far the panel hangs below the AH
 local LEFT, RIGHT = 64, 46   -- graph area margins (right side holds the volume scale)
-local TOP, BOTTOM = 100, 250 -- graph area: top offset, space kept below it
-local RANGES = { 7, 14, 30, 90 }
+local TOP, BOTTOM = 100, 290 -- graph area: top offset, space kept below it
+local RANGES = { 1, 3, 7, 14, 30, 90, 0 } -- 0 = all time
 local BLUE = { 0.2, 0.8, 1 }
 local COPPER = { 0.93, 0.55, 0.25 }
 local VOLC = { 0.62, 0.5, 0.95 }    -- volume (listed) bars
@@ -144,7 +145,7 @@ local function BreakUpLargeNumbersSafe(n)
 end
 
 -- Pools: day ticks / labels / day grid lines, price lines, dots
-local pools = { tick = {}, xlabel = {}, vgrid = {}, line = {}, dot = {}, band = {}, vol = {}, faint = {} }
+local pools = { tick = {}, xlabel = {}, vgrid = {}, line = {}, dot = {}, band = {}, vol = {}, faint = {}, sub = {} }
 local function pooled(kind, i, make)
   local p = pools[kind]
   if not p[i] then p[i] = make() end
@@ -243,7 +244,7 @@ stats:SetSpacing(3)
 -- Pattern reports under the graph: day of week (7 columns) and time of day
 -- (4). Each one leads with a plain sentence ("Cheapest: Tue - buy then"),
 -- then a mini chart: bar UP (red) = pricier than usual, DOWN (green) = cheaper.
-local ROW_H, BAR_H = 84, 12
+local ROW_H, BAR_H = 92, 13
 local function makeRow(n, bottom)
   local row = CreateFrame("Frame", nil, gv)
   row:SetPoint("BOTTOMLEFT", 16, bottom)
@@ -274,8 +275,8 @@ local function makeRow(n, bottom)
   end
   return row
 end
-local todRow = makeRow(4, 8)
-local dowRow = makeRow(7, 8 + ROW_H + 6)
+local todRow = makeRow(4, 10)
+local dowRow = makeRow(7, 10 + ROW_H + 12)
 
 local function confidence(n, unit)
   local s = ("%d %s%s"):format(n, unit, n == 1 and "" or "s")
@@ -340,7 +341,7 @@ for i, days in ipairs(RANGES) do
   local b = CreateFrame("Button", nil, gv, "UIPanelButtonTemplate")
   b:SetSize(44, 20)
   b:SetPoint("TOPLEFT", 16 + (i - 1) * 48, -50)
-  b:SetText(days .. "d")
+  b:SetText(days == 0 and "All" or (days .. "d"))
   b:SetScript("OnClick", function()
     Krom_TheSearchForMoreMoneyDB.range = days
     if ns.redraw then ns.redraw() end
@@ -384,7 +385,7 @@ local function legendItem(color, label, kind, key, tip)
 end
 legendItem(BLUE, "Market value", "line", nil, "What a real amount costs: the cheapest 15-30% of everything listed, bargain outliers ignored.")
 legendItem({ 0.85, 0.85, 0.95, 0.6 }, "Cheapest listing", "dot", "showCheapest", "The single cheapest listing that day, when it was under the market value. Usually a bargain that got sniped.")
-legendItem(COPPER, "Vendor price", "line", nil, "What a vendor pays. The floor - selling on the AH below this is throwing money away.")
+legendItem(COPPER, "Vendor price", "line", "showVendor", "What a vendor pays. The floor - selling on the AH below this is throwing money away.")
 legendItem({ VOLC[1], VOLC[2], VOLC[3], 0.6 }, "Listed (volume)", "bar", "showVolume", "How many were up for sale that day (most seen). Scale on the right edge. Hover a bar for the count.")
 local function updateLegend()
   for _, b in ipairs(legendItems) do
@@ -500,8 +501,10 @@ local function drawPatterns(itemID)
   -- day of week: daily prices, grouped into Monday-to-Sunday weeks
   e = {}
   for _, p in ipairs(ns.history(itemID)) do
-    local wd = (ns.weekday(p[1]) + 5) % 7 + 1 -- Mon=1 .. Sun=7
-    e[#e + 1] = { math.floor((p[1] + 3) / 7), wd, p[2] }
+    if not p[4] then -- skip weekly averages from long ago: they have no weekday
+      local wd = (ns.weekday(p[1]) + 5) % 7 + 1 -- Mon=1 .. Sun=7
+      e[#e + 1] = { math.floor((p[1] + 3) / 7), wd, p[2] }
+    end
   end
   pct, used = pattern(e, 7)
   drawRow(dowRow, "Weekly report |cff999999(vs that week's average)|r", DOW_NAMES, DOW_SHORT, pct, used, "week",
@@ -547,21 +550,26 @@ function ns.redraw()
   icon:SetTexture(tex or "Interface\\Icons\\INV_Misc_QuestionMark")
   title:SetText(name or ("Item " .. itemID))
   if vendor and vendor <= 0 then vendor = nil end
+  local vendorPrice = vendor          -- for the stats line
+  if not opt("showVendor", true) then vendor = nil end
 
   local today = ns.today()
-  local first = today - range + 1
-  local pts = ns.history(itemID, first)
   local all = ns.history(itemID)
+  local span = range
+  if range == 0 then -- all time: from the first thing we know (at least a week)
+    span = math.max(7, all[1] and (today - all[1][1] + 1) or 7)
+  end
+  local first = today - span + 1
+  local pts = ns.history(itemID, first)
   subtitle:SetText(("%s%d days of data, %d in this range"):format(ns.house == "neutral" and "|cffff9933Neutral AH|r - " or "", #all, #pts))
 
   -- x axis: fractional days from `first` to the end of today
-  local span = range
   local function xOf(dayf) return (dayf - first) / span * GW end
 
   -- Day backdrop: alternating light bands per day (per week on 90d), a
   -- brighter line where each week starts (Monday), a tick per day.
   local dayW = GW / span
-  local weekly = range > 30
+  local weekly = span > 30
   local li = 0
   for d = first, today do
     local i = d - first + 1
@@ -583,14 +591,21 @@ function ns.redraw()
       wl:ClearAllPoints(); wl:SetWidth(1)
       wl:SetPoint("TOP", area, "TOPLEFT", x, 0); wl:SetPoint("BOTTOM", area, "BOTTOMLEFT", x, 0); wl:Show()
     end
-    -- labels: every day (7d), every 2nd day (14d), Mondays (30d), every 2nd Monday (90d)
+    -- labels: every day (<=7d), every 2nd day (14d), Mondays (30d),
+    -- every 2nd Monday (90d), the 1st of each month (longer)
     local text, at
-    if range <= 7 then
+    if span <= 7 then
       text, at = (d == today and "today" or ns.dayLabel(d)), xOf(d + 0.5)
-    elseif range <= 14 then
+    elseif span <= 14 then
       if (today - d) % 2 == 0 then text, at = (d == today and "today" or ns.dayLabel(d)), xOf(d + 0.5) end
-    elseif monday and (range <= 30 or week % 2 == 0) and (today - d) * dayW > 34 then
-      text, at = ns.dayLabel(d), x
+    elseif span <= 90 then
+      if monday and (span <= 30 or week % 2 == 0) and (today - d) * dayW > 34 then
+        text, at = ns.dayLabel(d), x
+      elseif d == today then
+        text, at = "today", xOf(d + 0.5)
+      end
+    elseif date("!*t", d * 86400).day == 1 and (today - d) * dayW > 30 then
+      text, at = ns.dayLabel(d):match("^%a+"), x
     elseif d == today then
       text, at = "today", xOf(d + 0.5)
     end
@@ -601,6 +616,28 @@ function ns.redraw()
       fs:SetPoint("TOP", area, "BOTTOMLEFT", at, -6)
       fs:SetText(text)
       fs:Show()
+    end
+  end
+
+  -- 1d / 3d: faint lines every 6 hours, labelled in your local time
+  if span <= 3 then
+    local si = 0
+    for q = 1, span * 4 - 1 do
+      if q % 4 ~= 0 then
+        local df = first + q / 4
+        si = si + 1
+        local l = pooled("sub", si, newTex("BORDER", 1, 1, 1, 0.06))
+        l:ClearAllPoints(); l:SetWidth(1)
+        l:SetPoint("TOP", area, "TOPLEFT", xOf(df), 0); l:SetPoint("BOTTOM", area, "BOTTOMLEFT", xOf(df), 0); l:Show()
+        if span == 1 then
+          li = li + 1
+          local fs = pooled("xlabel", li, function() return gv:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall") end)
+          fs:ClearAllPoints()
+          fs:SetPoint("TOP", area, "BOTTOMLEFT", xOf(df), -6)
+          fs:SetText(date("%H:%M", math.floor(df * 86400)))
+          fs:Show()
+        end
+      end
     end
   end
 
@@ -741,12 +778,12 @@ function ns.redraw()
   if #pts >= 2 then
     local pct = (pts[#pts][2] - pts[1][2]) / pts[1][2] * 100
     local col = pct > 0.5 and "|cffff6060" or pct < -0.5 and "|cff60ff60" or "|cffcccccc"
-    change = ("   %s%+.0f%%|r over %dd"):format(col, pct, range)
+    change = ("   %s%+.0f%%|r over %s"):format(col, pct, range == 0 and "all time" or (range .. "d"))
   end
   local vend = ""
-  if vendor then
-    vend = ("   Vendor: |cffffffff%s|r"):format(money(vendor))
-    if latest[2] < vendor * 1.15 then vend = vend .. " |cffff9933(AH barely beats vendor)|r" end
+  if vendorPrice then
+    vend = ("   Vendor: |cffffffff%s|r"):format(money(vendorPrice))
+    if latest[2] < vendorPrice * 1.15 then vend = vend .. " |cffff9933(AH barely beats vendor)|r" end
   end
   local rawToday = ns.realmData().items[itemID] and ns.realmData().items[itemID][today]
   if rawToday and latest[1] == today and latest[3] and rawToday < latest[2] * 0.9 then
@@ -766,7 +803,7 @@ local function dock()
   panel:ClearAllPoints()
   if ah and ah:IsShown() then
     panel:SetPoint("TOPLEFT", ah, "TOPRIGHT", 4, 0)
-    panel:SetSize(W, math.max(480, math.floor(ah:GetHeight() or H)))
+    panel:SetSize(W, math.max(480, math.floor(ah:GetHeight() or H) + EXTRA_H))
     panel.docked = true
   else
     panel:SetPoint("CENTER")

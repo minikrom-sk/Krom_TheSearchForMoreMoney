@@ -51,11 +51,11 @@ catBar:SetHeight(44)
 
 -- Column headers
 local COLS = { -- label, x within a row, width, justify
-  { "Item", 24, 190, "LEFT" },
-  { "Under", 218, 50, "RIGHT" },
-  { "Price", 272, 66, "RIGHT" },
-  { "Vendor", 342, 66, "RIGHT" },
-  { "Profit", 412, 72, "RIGHT" },
+  { "Item", 24, 270, "LEFT" },
+  { "Under", 300, 60, "RIGHT" },
+  { "Price", 366, 70, "RIGHT" },
+  { "Vendor", 442, 70, "RIGHT" },
+  { "Profit", 512, 72, "RIGHT" },
 }
 local listTop = -100
 for _, c in ipairs(COLS) do

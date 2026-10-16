@@ -227,13 +227,22 @@ local function sortedOf(t, sinceDay)
   return out
 end
 
--- Price history: sorted { day, price, isMarket }. Uses the market value where
--- we have one, else that day's lowest listing (e.g. imported days).
+-- Price history: sorted { day, price, isMarket, isWeekly }. Uses the market
+-- value where we have one, else that day's lowest listing (e.g. imported
+-- days). Older than keepDays: one weekly average per week, placed on Thursday.
 function ns.history(itemID, sinceDay, key)
   local realm = ns.realmData(key)
   local m = realm.market and realm.market[itemID] or {}
   local raw = realm.items[itemID] or {}
   local out = {}
+  local wk = realm.weekly and realm.weekly[itemID]
+  if wk then
+    local cutoff = ns.today() - opt("keepDays", 90)
+    for w, price in pairs(wk) do
+      local day = w * 7 -- Thursday of that Monday-to-Sunday week
+      if day < cutoff and (not sinceDay or day >= sinceDay) then out[#out + 1] = { day, price, true, true } end
+    end
+  end
   for day, price in pairs(m) do
     if not sinceDay or day >= sinceDay then out[#out + 1] = { day, price, true } end
   end
@@ -294,6 +303,39 @@ function ns.prune()
   local cutoff = ns.today() - opt("keepDays", 90)
   local removed = 0
   for _, realm in pairs(Krom_TheSearchForMoreMoneyDB.realms) do
+    -- Days about to be dropped are first rolled into one average per week, kept
+    -- forever (that's the "All" range). weekly[itemID][week] = average price,
+    -- weeklyN = how many days went into it (so later days average in fairly).
+    realm.weekly, realm.weeklyN = realm.weekly or {}, realm.weeklyN or {}
+    local market = realm.market or {}
+    for itemID, hist in pairs(realm.items) do
+      local m = market[itemID] or {}
+      local add = {}
+      for day, price in pairs(hist) do
+        if day < cutoff then
+          local w = math.floor((day + 3) / 7)
+          add[w] = add[w] or { 0, 0 }
+          add[w][1] = add[w][1] + (m[day] or price)
+          add[w][2] = add[w][2] + 1
+        end
+      end
+      for day, price in pairs(m) do
+        if day < cutoff and not hist[day] then
+          local w = math.floor((day + 3) / 7)
+          add[w] = add[w] or { 0, 0 }
+          add[w][1] = add[w][1] + price
+          add[w][2] = add[w][2] + 1
+        end
+      end
+      for w, s in pairs(add) do
+        local wk = realm.weekly[itemID] or {}
+        local wn = realm.weeklyN[itemID] or {}
+        local n0 = wn[w] or 0
+        wk[w] = math.floor(((wk[w] or 0) * n0 + s[1]) / (n0 + s[2]) + 0.5)
+        wn[w] = n0 + s[2]
+        realm.weekly[itemID], realm.weeklyN[itemID] = wk, wn
+      end
+    end
     for itemID, hist in pairs(realm.items) do
       for day in pairs(hist) do
         if day < cutoff then hist[day] = nil; removed = removed + 1 end
