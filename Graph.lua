@@ -59,14 +59,8 @@ end
 function ns.addView(name, label, frame, onShow)
   ns.views[name] = { frame = frame, onShow = onShow }
   local t = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-  t:SetSize(96, 22)
-  -- tabs sit in the header, top right (under the panel they ran off the screen)
-  local prev = tabs[#tabs]
-  if prev then
-    prev:ClearAllPoints()
-    prev:SetPoint("TOPRIGHT", t, "TOPLEFT", -4, 0)
-  end
-  t:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -46, -14)
+  t:SetSize(90, 22)
+  t:SetPoint("TOPLEFT", panel, "BOTTOMLEFT", 8 + #tabs * 94, 2)
   t:SetText(label)
   t.view = name
   t:SetScript("OnClick", function() ns.showView(name) end)
@@ -91,12 +85,12 @@ icon:SetSize(32, 32)
 icon:SetPoint("TOPLEFT", 14, -12)
 local title = gv:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
 title:SetPoint("TOPLEFT", icon, "TOPRIGHT", 8, -1)
-title:SetPoint("RIGHT", -260, 0)
+title:SetPoint("RIGHT", -60, 0)
 title:SetJustifyH("LEFT")
 title:SetWordWrap(false)
 local subtitle = gv:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 subtitle:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -3)
-subtitle:SetPoint("RIGHT", -260, 0)
+subtitle:SetPoint("RIGHT", -60, 0)
 subtitle:SetJustifyH("LEFT")
 
 local lock = CreateFrame("Button", nil, gv)
