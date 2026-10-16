@@ -92,11 +92,14 @@ local function auctionatorDayZero()
 end
 
 -- Which realm table(s) in Auctionator's database belong to this realm.
--- Auctionator files prices under the "root" of your connected realms (the
--- first name GetAutoCompleteRealms gives), which on Forever isn't your
--- realm's name - "Classic Beta PvE 2" lives under "PvE". So try that first.
+-- Auctionator files prices under its own name for your connected realms
+-- (Auctionator.State.CurrentRealm), which on Forever isn't your realm's name.
+-- Fallback when that isn't available: connected realms, then the realm name.
 local function norm(s) return (tostring(s or ""):lower():gsub("[%s%-']", "")) end
 local function realmTables(db)
+  -- Best answer: ask Auctionator which realm it's using right now.
+  local current = Auctionator and Auctionator.State and Auctionator.State.CurrentRealm
+  if current and db[current] then return { { current, db[current] } } end
   local wanted = {}
   local connected = GetAutoCompleteRealms and GetAutoCompleteRealms() or {}
   if type(connected) == "table" then for _, r in ipairs(connected) do wanted[#wanted + 1] = norm(r) end end
