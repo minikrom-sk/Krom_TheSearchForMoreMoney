@@ -94,8 +94,8 @@ local function dayDigest(items, day)
   return count, hash
 end
 
-local function digests()
-  local items = ns.realmData().items
+local function digests(key)
+  local items = ns.realmData(key).items
   local today, out = ns.today(), {}
   for day = today - SYNC_DAYS + 1, today do
     local c, h = dayDigest(items, day)
@@ -122,20 +122,23 @@ local function send(target, payload)
   comm:SendCommMessage(PREFIX, encode(payload), "WHISPER", target, "BULK")
 end
 
-local function sendHello(target, isReply)
-  local parts = {}
-  for day, d in pairs(digests()) do parts[#parts + 1] = ("%d:%d:%d"):format(day, d[1], d[2]) end
-  send(target, ("H|1|%s|%d|%s"):format(ns.realmKey(), isReply and 1 or 0, table.concat(parts, ",")))
+-- One hello per market we keep (faction AH + neutral AH).
+local function sendHello(target, isReply, key)
+  for _, k in ipairs(key and { key } or ns.allKeys()) do
+    local parts = {}
+    for day, d in pairs(digests(k)) do parts[#parts + 1] = ("%d:%d:%d"):format(day, d[1], d[2]) end
+    send(target, ("H|1|%s|%d|%s"):format(k, isReply and 1 or 0, table.concat(parts, ",")))
+  end
 end
 
-local function sendDay(target, day)
-  local items = ns.realmData().items
+local function sendDay(target, day, key)
+  local items = ns.realmData(key).items
   local parts = {}
   for itemID, hist in pairs(items) do
     if hist[day] then parts[#parts + 1] = itemID .. ":" .. hist[day] end
   end
   if #parts == 0 then return end
-  send(target, ("D|%s|%d|%s"):format(ns.realmKey(), day, table.concat(parts, ",")))
+  send(target, ("D|%s|%d|%s"):format(key, day, table.concat(parts, ",")))
   stats.sent = stats.sent + #parts
 end
 
@@ -156,36 +159,44 @@ end
 -- ---------------------------------------------------------------------------
 -- Receiving
 -- ---------------------------------------------------------------------------
-local replied = {} -- sender -> time we last replied with our own hello
+local replied = {} -- sender..market -> time we last replied with our own hello
+
+-- Only markets we keep ourselves: our faction's AH (same realm) and neutral.
+-- A Horde friend's neutral data is fine; their Horde AH data is not.
+local function ours(realm)
+  for _, k in ipairs(ns.allKeys()) do if k == realm then return true end end
+  return false
+end
 
 local function onHello(sender, realm, isReply, list)
-  if realm ~= ns.realmKey() then return end -- different realm/faction AH: not comparable
+  if not ours(realm) then return end -- different realm/faction AH: not comparable
   local theirs = {}
   for day, c, h in list:gmatch("(%d+):(%d+):(%d+)") do theirs[tonumber(day)] = { tonumber(c), tonumber(h) } end
-  local mine = digests()
+  local mine = digests(realm)
   if opt("share", true) then
     for day, d in pairs(mine) do
       local t = theirs[day]
-      if not t or t[1] ~= d[1] or t[2] ~= d[2] then sendDay(sender, day) end
+      if not t or t[1] ~= d[1] or t[2] ~= d[2] then sendDay(sender, day, realm) end
     end
   end
   -- Ask them for theirs by replying with our hello (at most once a minute each).
   if not isReply then
     local now = GetTime()
-    if not replied[sender] or now - replied[sender] > 60 then
-      replied[sender] = now
-      if opt("share", true) then sendHello(sender, true) end
+    local rk = sender .. "|" .. realm
+    if not replied[rk] or now - replied[rk] > 60 then
+      replied[rk] = now
+      if opt("share", true) then sendHello(sender, true, realm) end
     end
   end
 end
 
 local function onDay(sender, realm, day, list)
-  if realm ~= ns.realmKey() or not opt("receive", true) then return end
+  if not ours(realm) or not opt("receive", true) then return end
   day = tonumber(day)
   if not day or day < ns.today() - opt("keepDays", 90) then return end
   local changed = 0
   for itemID, price in list:gmatch("(%d+):(%d+)") do
-    if ns.record(itemID, price, day) then changed = changed + 1 end
+    if ns.record(itemID, price, day, realm) then changed = changed + 1 end
   end
   stats.got = stats.got + changed
   if changed > 0 then

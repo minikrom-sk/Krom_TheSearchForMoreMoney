@@ -86,8 +86,9 @@ local function buildOptions()
   info:SetPoint("TOPLEFT", 28, y)
   info:SetJustifyH("LEFT")
   refreshers[#refreshers + 1] = function()
-    local n, pts = ns.countItems()
-    info:SetText(("%s: %d items, %d daily prices stored. Kept for %d days."):format(ns.realmKey(), n, pts, opt("keepDays", 90)))
+    local n, pts = ns.countItems(ns.realmKey("faction"))
+    local nn, np = ns.countItems(ns.realmKey("neutral"))
+    info:SetText(("%s: %d items, %d daily prices. Neutral AH: %d items, %d prices. Kept for %d days."):format(ns.realmKey("faction"), n, pts, nn, np, opt("keepDays", 90)))
   end
   y = y - 22
   button("Full scan now (AH open)", 190, 28, function() ns.startFullScan() end)
@@ -267,6 +268,24 @@ SlashCmdList.KROMMOREMONEY = function(msg)
     local wl = Krom_TheSearchForMoreMoneyDB.whitelist
     say(#wl > 0 and ("crew: " .. table.concat(wl, ", ")) or "your crew list is empty.")
     say(("this session: sent %d prices, received %d new."):format(ns.syncStats.sent, ns.syncStats.got))
+  elseif cmd == "house" then
+    local arg = rest:lower()
+    if arg == "neutral" or arg == "faction" or arg == "auto" then
+      if ns.setHouseOverride(arg ~= "auto" and arg or nil) then
+        say(("this auctioneer now counts as %s. New prices go there."):format(ns.house == "neutral" and "a NEUTRAL auction house" or "your faction's auction house"))
+        ns.redraw()
+      else
+        say("talk to an auctioneer first (open the AH), then /money house neutral|faction|auto.")
+      end
+    else
+      local house, id, forced = ns.detectHouse()
+      if id then
+        say(("%s (%d) is %s%s. Change: /money house neutral|faction|auto"):format(UnitName("npc") or "this auctioneer", id,
+          house == "neutral" and "a NEUTRAL auction house" or "your faction's auction house", forced and " (set by you)" or ""))
+      else
+        say("open the AH, then /money house to see which market it is.")
+      end
+    end
   elseif cmd == "import" then
     if ns.importAuctionator then ns.importAuctionator() end
   elseif cmd == "options" or cmd == "config" then
@@ -274,6 +293,6 @@ SlashCmdList.KROMMOREMONEY = function(msg)
   elseif tonumber(cmd) then
     ns.showPanel(tonumber(cmd))
   else
-    say("commands: /money (graph), /money <item link>, /money scan, /money sync, /money add Name, /money remove Name, /money crew, /money import, /money options")
+    say("commands: /money (graph), /money <item link>, /money scan, /money sync, /money add Name, /money remove Name, /money crew, /money import, /money house, /money options")
   end
 end

@@ -196,7 +196,7 @@ function ns.redraw()
   local first = today - range + 1
   local pts = ns.history(itemID, first)
   local all = ns.history(itemID)
-  subtitle:SetText(("%d days of data, %d in this range"):format(#all, #pts))
+  subtitle:SetText(("%s%d days of data, %d in this range"):format(ns.house == "neutral" and "|cffff9933Neutral AH|r - " or "", #all, #pts))
 
   if #pts == 0 then
     empty:SetText(#all > 0 and "No prices in this range - try a longer one." or "No prices recorded yet.\nSearch for it in the Auction House.")

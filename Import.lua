@@ -160,14 +160,14 @@ function ns.importAuctionator(dryRun)
             -- already huge is treated as a day count since 1970.
             local ourDay = (d < 10000) and (d + offset) or d
             if ourDay >= keepFrom and ourDay <= ns.today() then
-              if not dryRun then ns.record(itemID, price, ourDay) end
+              if not dryRun then ns.record(itemID, price, ourDay, ns.realmKey("faction")) end
               prices = prices + 1
               got = true
             end
           end
         elseif type(entry.m) == "number" then
           -- no history, just a latest price: record it for today
-          if not dryRun then ns.record(itemID, entry.m) end
+          if not dryRun then ns.record(itemID, entry.m, nil, ns.realmKey("faction")) end
           prices, got = prices + 1, true
         else
           odd = odd + 1

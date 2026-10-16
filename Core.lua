@@ -32,8 +32,38 @@ function ns.dayLabel(day)
   return ("%d/%d"):format(d.month, d.day)
 end
 
-function ns.realmKey()
-  return (GetRealmName() or "?") .. "-" .. (UnitFactionGroup("player") or "?")
+-- Which auction house prices belong to. Your faction's AH and the neutral
+-- (goblin) AHs are separate markets, so they're stored separately:
+--   "Realm-Alliance" / "Realm-Horde" / "Realm-Neutral"
+-- ns.house is "neutral" only while a neutral AH is open.
+ns.house = "faction"
+function ns.realmKey(house)
+  house = house or ns.house
+  local side = house == "neutral" and "Neutral" or (UnitFactionGroup("player") or "?")
+  return (GetRealmName() or "?") .. "-" .. side
+end
+function ns.allKeys() return { ns.realmKey("faction"), ns.realmKey("neutral") } end
+
+-- Decide which AH we're standing at, from the auctioneer we're talking to.
+-- Goblin (neutral) auctioneers have no faction. A per-auctioneer override
+-- (/money house neutral|faction) wins, for any odd one the game mislabels.
+local function npcID()
+  local guid = UnitGUID and UnitGUID("npc")
+  return guid and tonumber((select(6, strsplit("-", guid))))
+end
+function ns.detectHouse()
+  local id = npcID()
+  local over = id and Krom_TheSearchForMoreMoneyDB.houseOverride[id]
+  if over then return over, id, true end
+  local f = UnitFactionGroup and UnitFactionGroup("npc")
+  return (f == "Alliance" or f == "Horde") and "faction" or "neutral", id, false
+end
+function ns.setHouseOverride(house)
+  local id = npcID()
+  if not id then return false end
+  Krom_TheSearchForMoreMoneyDB.houseOverride[id] = house -- nil = automatic
+  ns.house = ns.detectHouse()
+  return true
 end
 
 function ns.money(copper)
@@ -295,12 +325,20 @@ ev:SetScript("OnEvent", function(_, event, arg1)
     db.realms = db.realms or {}
     db.whitelist = db.whitelist or {}
     db.minimap = db.minimap or {}
+    db.houseOverride = db.houseOverride or {}
   elseif event == "PLAYER_LOGIN" then
     ns.prune()
     for _, fn in ipairs(ns.onLogin or {}) do pcall(fn) end
   elseif event == "AUCTION_HOUSE_SHOW" then
+    local house, id = ns.detectHouse()
+    ns.house = house
+    if house == "neutral" and not ns.toldNeutral then
+      ns.toldNeutral = true
+      say(("neutral auction house (%s) - its prices are kept separate from your faction's. Wrong? /money house faction"):format(UnitName("npc") or "auctioneer"))
+    end
     if ns.onAHShow then ns.onAHShow() end
   elseif event == "AUCTION_HOUSE_CLOSED" then
+    ns.house = "faction"
     if ns.onAHHide then ns.onAHHide() end
   elseif event == "AUCTION_ITEM_LIST_UPDATE" then
     onClassicList()
