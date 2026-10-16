@@ -84,13 +84,20 @@ footer:SetJustifyH("LEFT")
 local deals, pending, offset = {}, 0, 0
 local category = nil -- classID or nil for all
 
+local requested = {} -- itemID -> true once we've asked the game to load it
+local waiting = {}   -- itemIDs we still need info for
 local function itemInfo(itemID)
   local GetInfo = (C_Item and C_Item.GetItemInfo) or GetItemInfo
   local ok, name, link, quality, _, _, _, _, _, _, tex, sellPrice, classID = pcall(GetInfo, itemID)
   if not ok or not name then
-    if C_Item and C_Item.RequestLoadItemDataByID then pcall(C_Item.RequestLoadItemDataByID, itemID) end
+    waiting[itemID] = true
+    if not requested[itemID] and C_Item and C_Item.RequestLoadItemDataByID then
+      requested[itemID] = true
+      pcall(C_Item.RequestLoadItemDataByID, itemID)
+    end
     return nil
   end
+  waiting[itemID] = nil
   return name, link, quality, tex, sellPrice or 0, classID
 end
 
@@ -118,13 +125,22 @@ local function compute()
       end
     end
   end
-  table.sort(deals, function(a, b) return a.profit > b.profit end)
+  -- ties broken by name so the list never shuffles between redraws
+  table.sort(deals, function(a, b)
+    if a.profit ~= b.profit then return a.profit > b.profit end
+    if a.name ~= b.name then return a.name < b.name end
+    return a.id < b.id
+  end)
 end
 ns.computeDeals = function() compute(); return deals, pending end
 
+local CLASS_NAMES = { [0] = "Consumable", "Container", "Weapon", "Gem", "Armor", "Reagent", "Projectile",
+  "Trade Goods", "Enhancement", "Recipe", nil, "Quiver", "Quest", "Key", nil, "Misc", "Glyph", "Battle Pet" }
 local function className(classID)
-  local n = GetItemClassInfo and GetItemClassInfo(classID)
-  return n or ("Type " .. tostring(classID))
+  local get = (C_Item and C_Item.GetItemClassInfo) or GetItemClassInfo
+  local ok, n = false, nil
+  if get then ok, n = pcall(get, classID) end
+  return (ok and n and n ~= "") and n or CLASS_NAMES[classID] or ("Type " .. tostring(classID))
 end
 
 -- ---------------------------------------------------------------------------
@@ -226,7 +242,10 @@ local function layoutCategories()
       counts[d.class] = counts[d.class] + 1
     end
   end
-  table.sort(order, function(a, b) return counts[a] > counts[b] end)
+  table.sort(order, function(a, b)
+    if counts[a] ~= counts[b] then return counts[a] > counts[b] end
+    return a < b
+  end)
   if category and not counts[category] then category = nil end
   local entries = { { nil, "All (" .. #deals .. ")" } }
   for _, c in ipairs(order) do entries[#entries + 1] = { c, className(c) .. " (" .. counts[c] .. ")" } end
@@ -332,7 +351,11 @@ end
 ns.onScanUpdated = soon
 local ev = CreateFrame("Frame")
 pcall(ev.RegisterEvent, ev, "GET_ITEM_INFO_RECEIVED")
-ev:SetScript("OnEvent", function() if pending > 0 then soon() end end)
+-- only items we're actually waiting on trigger a refresh (the game fires
+-- this event for everything, constantly)
+ev:SetScript("OnEvent", function(_, _, itemID)
+  if itemID and waiting[itemID] then waiting[itemID] = nil; soon() end
+end)
 view:SetScript("OnSizeChanged", function() redrawList() end)
 
 ns.addView("deals", "Deals", view, refresh)
