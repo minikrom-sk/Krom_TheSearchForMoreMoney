@@ -158,7 +158,12 @@ local function draw(itemID)
   -- words: latest price, how it compares with vendor, volume today
   local latest = pts[#pts]
   local age = today - latest[1]
-  head:SetText(("|cff33ccff%s|r %s"):format(money(latest[2]), age == 0 and "today" or (age .. "d ago")))
+  local ratio = ""
+  if vendor then
+    local x = latest[2] / vendor
+    ratio = ("  |cffcccccc%sx vendor|r"):format(x >= 10 and ("%d"):format(x) or ("%.1f"):format(x))
+  end
+  head:SetText(("|cff33ccff%s|r %s%s"):format(money(latest[2]), age == 0 and "today" or (age .. "d ago"), ratio))
   local col, word = ns.verdict(latest[2], vendor, itemID)
   verdict:SetText(col and (col .. word .. "|r") or "|cff999999no vendor price|r")
   footL:SetText(ns.dayLabel(first))
