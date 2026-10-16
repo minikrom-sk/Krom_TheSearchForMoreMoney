@@ -3,7 +3,8 @@
 -- Only names on your whitelist are ever messaged or listened to.
 -- Protocol (all compressed with LibDeflate, chunked/throttled by AceComm):
 --   H|v1|realmKey|reply|day:count:hash,...   "hello" with a fingerprint per day
---   D|realmKey|day|itemID:price,itemID:price  all of a day's prices
+--   D|realmKey|day|itemID:price,itemID:price  all of a day's lowest listings
+--   M|realmKey|day|itemID:price,...           all of a day's market values
 -- On a hello, we send every day whose fingerprint differs from ours, and
 -- reply with our own hello (once) so the other side sends theirs. Both sides
 -- keep the lowest price per item per day, so everyone ends up with the same
@@ -95,10 +96,13 @@ local function dayDigest(items, day)
 end
 
 local function digests(key)
-  local items = ns.realmData(key).items
+  local realm = ns.realmData(key)
+  local items, market = realm.items, realm.market or {}
   local today, out = ns.today(), {}
   for day = today - SYNC_DAYS + 1, today do
     local c, h = dayDigest(items, day)
+    local mc, mh = dayDigest(market, day)
+    c, h = c + mc, (h + mh * 31) % 2147483647
     if c > 0 then out[day] = { c, h } end
   end
   return out
@@ -132,7 +136,16 @@ local function sendHello(target, isReply, key)
 end
 
 local function sendDay(target, day, key)
-  local items = ns.realmData(key).items
+  local realm = ns.realmData(key)
+  local mparts = {}
+  for itemID, hist in pairs(realm.market or {}) do
+    if hist[day] then mparts[#mparts + 1] = itemID .. ":" .. hist[day] end
+  end
+  if #mparts > 0 then
+    send(target, ("M|%s|%d|%s"):format(key, day, table.concat(mparts, ",")))
+    stats.sent = stats.sent + #mparts
+  end
+  local items = realm.items
   local parts = {}
   for itemID, hist in pairs(items) do
     if hist[day] then parts[#parts + 1] = itemID .. ":" .. hist[day] end
@@ -190,13 +203,14 @@ local function onHello(sender, realm, isReply, list)
   end
 end
 
-local function onDay(sender, realm, day, list)
+local function onDay(sender, realm, day, list, isMarket)
   if not ours(realm) or not opt("receive", true) then return end
   day = tonumber(day)
   if not day or day < ns.today() - opt("keepDays", 90) then return end
   local changed = 0
   for itemID, price in list:gmatch("(%d+):(%d+)") do
-    if ns.record(itemID, price, day, realm) then changed = changed + 1 end
+    local rec = isMarket and ns.recordMarket or ns.record
+    if rec(itemID, price, day, realm) then changed = changed + 1 end
   end
   stats.got = stats.got + changed
   if changed > 0 then
@@ -213,9 +227,9 @@ local function onComm(prefix, message, channel, sender)
   if kind == "H" then
     local _, ver, realm, reply, list = data:match("^(H)|(%d+)|([^|]*)|(%d)|(.*)$")
     if ver then onHello(sender, realm, reply == "1", list) end
-  elseif kind == "D" then
-    local realm, day, list = data:match("^D|([^|]*)|(%d+)|(.*)$")
-    if realm then onDay(sender, realm, day, list) end
+  elseif kind == "D" or kind == "M" then
+    local realm, day, list = data:match("^[DM]|([^|]*)|(%d+)|(.*)$")
+    if realm then onDay(sender, realm, day, list, kind == "M") end
   end
 end
 

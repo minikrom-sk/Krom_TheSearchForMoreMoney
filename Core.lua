@@ -3,6 +3,9 @@
 -- Prices are stored per realm+faction, per item, per day, as the LOWEST
 -- per-unit buyout seen that day:
 --   Krom_TheSearchForMoreMoneyDB.realms[realmKey].items[itemID][day] = copper
+-- and, where we saw the whole price ladder, the day's MARKET VALUE (what a
+-- real amount costs, ignoring lone bargain listings - see ns.marketValue):
+--   ...realms[realmKey].market[itemID][day] = copper
 -- "day" = whole days since 1970 in server time, so the whole crew buckets alike.
 --
 -- Prices you see live are also kept per quarter of YOUR day (night 0-6,
@@ -120,41 +123,114 @@ local function notify(itemID)
   for _, fn in ipairs(ns.listeners) do pcall(fn, itemID) end
 end
 
--- Record one observation. Returns true if it lowered/added the day's price.
-function ns.record(itemID, unitPrice, day, key)
-  itemID, unitPrice = tonumber(itemID), tonumber(unitPrice)
-  if not itemID or not unitPrice or unitPrice <= 0 then return false end
-  unitPrice = math.floor(unitPrice + 0.5)
-  local live = day == nil
-  day = day or ns.today()
-  local realm = ns.realmData(key)
-  if live then
-    -- seen right now: also file it under this quarter of the day
-    realm.slots = realm.slots or {}
-    local s = realm.slots[itemID]
-    if not s then s = {}; realm.slots[itemID] = s end
-    local slot = ns.slotNow()
-    if not s[slot] or unitPrice < s[slot] then s[slot] = unitPrice end
-  end
-  local items = realm.items
-  local hist = items[itemID]
-  if not hist then hist = {}; items[itemID] = hist end
-  local old = hist[day]
-  if old and old <= unitPrice then return false end
-  hist[day] = unitPrice
+-- Keep the lower of what's stored and `price` in t[itemID][k]. True if changed.
+local function keepLowest(t, itemID, k, price)
+  local h = t[itemID]
+  if not h then h = {}; t[itemID] = h end
+  if h[k] and h[k] <= price then return false end
+  h[k] = price
   return true
 end
 
--- History for an item as a sorted list of { day, price }, optionally since a day.
-function ns.history(itemID, sinceDay, key)
-  local hist = ns.realmData(key).items[itemID]
+-- Raw lowest listing seen in a day (the faint dots, and the fallback when
+-- we don't know the market value). Returns true if it lowered/added it.
+function ns.record(itemID, unitPrice, day, key)
+  itemID, unitPrice = tonumber(itemID), tonumber(unitPrice)
+  if not itemID or not unitPrice or unitPrice <= 0 then return false end
+  return keepLowest(ns.realmData(key).items, itemID, day or ns.today(), math.floor(unitPrice + 0.5))
+end
+
+-- Market value: what a real amount actually costs (see ns.marketValue).
+-- Per day the lowest market value seen; live ones also per quarter of day.
+function ns.recordMarket(itemID, value, day, key)
+  itemID, value = tonumber(itemID), tonumber(value)
+  if not itemID or not value or value <= 0 then return false end
+  value = math.floor(value + 0.5)
+  local realm = ns.realmData(key)
+  if day == nil then
+    realm.slots = realm.slots or {}
+    keepLowest(realm.slots, itemID, ns.slotNow(), value)
+  end
+  realm.market = realm.market or {}
+  return keepLowest(realm.market, itemID, day or ns.today(), value)
+end
+
+-- TSM-style market value from a price ladder { {unitPrice, quantity}, ... }:
+-- take the cheapest 15% of everything listed (at least one), carry on up to
+-- 30% while each step is no more than 20% pricier, then drop prices more
+-- than 1.5 standard deviations from the mean and average what's left,
+-- weighted by quantity. A lone 5c listing under 2,000 at 20c gets thrown out;
+-- if only three are listed, the cheapest one IS the market.
+function ns.marketValue(ladder)
+  table.sort(ladder, function(a, b) return a[1] < b[1] end)
+  local total = 0
+  for _, e in ipairs(ladder) do total = total + e[2] end
+  if total <= 0 then return nil end
+  local need, cap = math.max(1, total * 0.15), total * 0.30
+  local pick, cum, prev = {}, 0, nil
+  for _, e in ipairs(ladder) do
+    if cum >= need and (cum >= cap or (prev and e[1] > prev * 1.2)) then break end
+    pick[#pick + 1] = e
+    cum, prev = cum + e[2], e[1]
+  end
+  local function wmean(list)
+    local s, w = 0, 0
+    for _, e in ipairs(list) do s = s + e[1] * e[2]; w = w + e[2] end
+    return w > 0 and s / w or nil, w
+  end
+  local mean, w = wmean(pick)
+  local var = 0
+  for _, e in ipairs(pick) do var = var + e[2] * (e[1] - mean) ^ 2 end
+  local sd = math.sqrt(var / w)
+  if sd > 0 then
+    local keep = {}
+    for _, e in ipairs(pick) do
+      if math.abs(e[1] - mean) <= 1.5 * sd then keep[#keep + 1] = e end
+    end
+    if #keep > 0 then mean = wmean(keep) end
+  end
+  return mean
+end
+
+-- Record a whole price ladder for an item seen right now.
+function ns.recordLadder(itemID, ladder)
+  if #ladder == 0 then return false end
+  local lowest = math.huge
+  for _, e in ipairs(ladder) do lowest = math.min(lowest, e[1]) end
+  local a = ns.record(itemID, lowest)
+  local b = ns.recordMarket(itemID, ns.marketValue(ladder))
+  return a or b
+end
+
+local function sortedOf(t, sinceDay)
   local out = {}
-  if not hist then return out end
-  for day, price in pairs(hist) do
+  if not t then return out end
+  for day, price in pairs(t) do
     if not sinceDay or day >= sinceDay then out[#out + 1] = { day, price } end
   end
   table.sort(out, function(a, b) return a[1] < b[1] end)
   return out
+end
+
+-- Price history: sorted { day, price, isMarket }. Uses the market value where
+-- we have one, else that day's lowest listing (e.g. imported days).
+function ns.history(itemID, sinceDay, key)
+  local realm = ns.realmData(key)
+  local m = realm.market and realm.market[itemID] or {}
+  local raw = realm.items[itemID] or {}
+  local out = {}
+  for day, price in pairs(m) do
+    if not sinceDay or day >= sinceDay then out[#out + 1] = { day, price, true } end
+  end
+  for day, price in pairs(raw) do
+    if not m[day] and (not sinceDay or day >= sinceDay) then out[#out + 1] = { day, price, false } end
+  end
+  table.sort(out, function(a, b) return a[1] < b[1] end)
+  return out
+end
+-- Just the lowest listings: sorted { day, price }.
+function ns.lowestHistory(itemID, sinceDay, key)
+  return sortedOf(ns.realmData(key).items[itemID], sinceDay)
 end
 
 -- How many were up for sale. Keeps the day's highest count (a full scan sees
@@ -208,6 +284,10 @@ function ns.prune()
         if day < cutoff then hist[day] = nil; removed = removed + 1 end
       end
       if next(hist) == nil then realm.items[itemID] = nil end
+    end
+    for itemID, v in pairs(realm.market or {}) do
+      for day in pairs(v) do if day < cutoff then v[day] = nil end end
+      if next(v) == nil then realm.market[itemID] = nil end
     end
     for itemID, v in pairs(realm.vol or {}) do
       for day in pairs(v) do if day < cutoff then v[day] = nil end end
@@ -269,10 +349,15 @@ end
 
 local function onCommodity(itemID)
   if not itemID then return end
-  local ok, info = pcall(C_AuctionHouse.GetCommoditySearchResultInfo, itemID, 1)
-  if ok and info and info.unitPrice and ns.record(itemID, info.unitPrice) then
-    recorded = recorded + 1
+  local n = C_AuctionHouse.GetNumCommoditySearchResults and C_AuctionHouse.GetNumCommoditySearchResults(itemID) or 1
+  local ladder = {}
+  for i = 1, n or 1 do
+    local ok, info = pcall(C_AuctionHouse.GetCommoditySearchResultInfo, itemID, i)
+    if ok and info and info.unitPrice and info.unitPrice > 0 then
+      ladder[#ladder + 1] = { info.unitPrice, info.quantity or 1 }
+    end
   end
+  if ns.recordLadder(itemID, ladder) then recorded = recorded + 1 end
   if C_AuctionHouse.GetCommoditySearchResultsQuantity then
     local okq, q = pcall(C_AuctionHouse.GetCommoditySearchResultsQuantity, itemID)
     if okq then ns.recordVolume(itemID, q) end
@@ -285,16 +370,15 @@ end
 local function onItemSearch(itemKey)
   if type(itemKey) ~= "table" then return end
   local n = C_AuctionHouse.GetNumItemSearchResults and C_AuctionHouse.GetNumItemSearchResults(itemKey) or 1
-  local best, qty = nil, 0
+  local ladder, qty = {}, 0
   for i = 1, n or 1 do
     local ok, info = pcall(C_AuctionHouse.GetItemSearchResultInfo, itemKey, i)
     if ok and info then qty = qty + (info.quantity or 1) end
-    if i <= 50 and ok and info and info.buyoutAmount and info.buyoutAmount > 0 then
-      local unit = info.buyoutAmount / math.max(1, info.quantity or 1)
-      if not best or unit < best then best = unit end
+    if ok and info and info.buyoutAmount and info.buyoutAmount > 0 then
+      ladder[#ladder + 1] = { info.buyoutAmount / math.max(1, info.quantity or 1), info.quantity or 1 }
     end
   end
-  if best and ns.record(itemKey.itemID, best) then recorded = recorded + 1 end
+  if ns.recordLadder(itemKey.itemID, ladder) then recorded = recorded + 1 end
   ns.recordVolume(itemKey.itemID, qty)
   ns.focus(itemKey.itemID, "search")
   notify(itemKey.itemID)
@@ -308,20 +392,28 @@ ns.fullScan = fullScan
 local function processClassicList(isFull)
   local n = GetNumAuctionItems and GetNumAuctionItems("list") or 0
   if n == 0 then return end
-  local i, counts = 1, {}
+  local i, counts, ladders = 1, {}, {}
   local function slice()
     local stop = math.min(n, i + 499)
     for j = i, stop do
       local _, _, count, _, _, _, _, _, _, buyout, _, _, _, _, _, _, itemID = GetAuctionItemInfo("list", j)
       if itemID then counts[itemID] = (counts[itemID] or 0) + (count or 1) end
-      if itemID and buyout and buyout > 0 and ns.record(itemID, buyout / math.max(1, count or 1)) then
-        recorded = recorded + 1
+      if itemID and buyout and buyout > 0 then
+        if isFull then
+          ladders[itemID] = ladders[itemID] or {}
+          table.insert(ladders[itemID], { buyout / math.max(1, count or 1), count or 1 })
+        elseif ns.record(itemID, buyout / math.max(1, count or 1)) then
+          recorded = recorded + 1
+        end
       end
     end
     i = stop + 1
     if i <= n then C_Timer.After(0, slice) else
       -- only a full scan sees everything; one search page would undercount
-      if isFull then for id, q in pairs(counts) do ns.recordVolume(id, q) end end
+      if isFull then
+        for id, q in pairs(counts) do ns.recordVolume(id, q) end
+        for id, l in pairs(ladders) do if ns.recordLadder(id, l) then recorded = recorded + 1 end end
+      end
       batchDone(isFull and "Full scan" or nil)
     end
   end
@@ -340,19 +432,21 @@ end
 -- Modern full scan: ReplicateItems, then read the replicate list in slices.
 local function processReplicate()
   local n = C_AuctionHouse.GetNumReplicateItems() or 0
-  local i, counts = 0, {}
+  local i, counts, ladders = 0, {}, {}
   local function slice()
     local stop = math.min(n - 1, i + 499)
     for j = i, stop do
       local _, _, count, _, _, _, _, _, _, buyout, _, _, _, _, _, _, itemID = C_AuctionHouse.GetReplicateItemInfo(j)
       if itemID then counts[itemID] = (counts[itemID] or 0) + (count or 1) end
-      if itemID and buyout and buyout > 0 and ns.record(itemID, buyout / math.max(1, count or 1)) then
-        recorded = recorded + 1
+      if itemID and buyout and buyout > 0 then
+        ladders[itemID] = ladders[itemID] or {}
+        table.insert(ladders[itemID], { buyout / math.max(1, count or 1), count or 1 })
       end
     end
     i = stop + 1
     if i < n then C_Timer.After(0, slice) else
       for id, q in pairs(counts) do ns.recordVolume(id, q) end
+      for id, l in pairs(ladders) do if ns.recordLadder(id, l) then recorded = recorded + 1 end end
       batchDone("Full scan")
     end
   end

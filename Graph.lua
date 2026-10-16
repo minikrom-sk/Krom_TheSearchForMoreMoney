@@ -110,7 +110,7 @@ local function BreakUpLargeNumbersSafe(n)
 end
 
 -- Pools: day ticks / labels / day grid lines, price lines, dots
-local pools = { tick = {}, xlabel = {}, vgrid = {}, line = {}, dot = {}, band = {}, vol = {} }
+local pools = { tick = {}, xlabel = {}, vgrid = {}, line = {}, dot = {}, band = {}, vol = {}, faint = {} }
 local function pooled(kind, i, make)
   local p = pools[kind]
   if not p[i] then p[i] = make() end
@@ -145,7 +145,12 @@ local function getDot(i)
       self.tex:SetSize(8, 8)
       GameTooltip:SetOwner(self, "ANCHOR_TOP")
       GameTooltip:AddLine(self.label)
-      GameTooltip:AddLine("Lowest: " .. money(self.price), 1, 1, 1)
+      if self.market then
+        GameTooltip:AddLine("Market value: " .. money(self.price), 1, 1, 1)
+      else
+        GameTooltip:AddLine("Lowest listing: " .. money(self.price), 1, 1, 1)
+        GameTooltip:AddLine("(no market value for this day - imported or a quick search)", 0.6, 0.6, 0.6, true)
+      end
       if self.vol then GameTooltip:AddLine("Listed that day: " .. BreakUpLargeNumbersSafe(self.vol), 0.8, 0.8, 0.9) end
       GameTooltip:Show()
     end)
@@ -156,6 +161,29 @@ end
 
 local volLabel = area:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
 volLabel:SetPoint("BOTTOMRIGHT", area, "BOTTOMRIGHT", -4, 3)
+
+-- Faint dots: the cheapest single listing that day, when it's under the line
+local function getFaint(i)
+  return pooled("faint", i, function()
+    local b = CreateFrame("Button", nil, area)
+    b:SetSize(10, 10)
+    b:SetFrameLevel(area:GetFrameLevel() + 2)
+    local t = b:CreateTexture(nil, "ARTWORK")
+    t:SetSize(4, 4)
+    t:SetPoint("CENTER")
+    t:SetColorTexture(0.85, 0.85, 0.95, 0.45)
+    b.tex = t
+    b:SetScript("OnEnter", function(self)
+      GameTooltip:SetOwner(self, "ANCHOR_TOP")
+      GameTooltip:AddLine(self.label)
+      GameTooltip:AddLine("Cheapest single listing: " .. money(self.price), 1, 1, 1)
+      GameTooltip:AddLine("A bargain someone posted - not what a real amount costs.", 0.6, 0.6, 0.6, true)
+      GameTooltip:Show()
+    end)
+    b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    return b
+  end)
+end
 
 -- Vendor price line (the floor)
 local vendorLine = area:CreateTexture(nil, "ARTWORK")
@@ -249,9 +277,9 @@ for i, days in ipairs(RANGES) do
 end
 
 -- Legend
-local legend = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-legend:SetPoint("LEFT", rangeBtns[#rangeBtns], "RIGHT", 14, 0)
-legend:SetText(("|cff%02x%02x%02xlowest price|r   |cff%02x%02x%02xvendor|r   |cffaaaabbbars = listed|r"):format(
+local legend = area:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+legend:SetPoint("TOPLEFT", area, "TOPLEFT", 6, -4)
+legend:SetText(("|cff%02x%02x%02xmarket value|r  |cffbbbbccdots = cheapest|r  |cff%02x%02x%02xvendor|r  |cffaaaabbbars = listed|r"):format(
   BLUE[1] * 255, BLUE[2] * 255, BLUE[3] * 255, COPPER[1] * 255, COPPER[2] * 255, COPPER[3] * 255))
 
 -- Full scan button (lives here because opening Options closes the AH)
@@ -490,11 +518,11 @@ function ns.redraw()
   for _, s in ipairs(slots) do
     local df = ns.slotDay(s[1])
     haveSlotDay[math.floor(df)] = true
-    plot[#plot + 1] = { df, s[2], ns.dayLabel(math.floor(df)) .. " " .. ns.QUARTERS[s[1] % 4]:lower() }
+    plot[#plot + 1] = { df, s[2], ns.dayLabel(math.floor(df)) .. " " .. ns.QUARTERS[s[1] % 4]:lower(), true }
   end
   for _, p in ipairs(pts) do
     if not haveSlotDay[p[1]] then
-      plot[#plot + 1] = { p[1] + 0.5, p[2], ns.dayLabel(p[1]) .. (p[1] == today and " (today)" or "") }
+      plot[#plot + 1] = { p[1] + 0.5, p[2], ns.dayLabel(p[1]) .. (p[1] == today and " (today)" or ""), p[3] }
     end
   end
   table.sort(plot, function(a, b) return a[1] < b[1] end)
@@ -504,7 +532,11 @@ function ns.redraw()
     lo = math.min(lo, p[2]); hi = math.max(hi, p[2]); sum = sum + p[2]
   end
   for _, p in ipairs(plot) do lo = math.min(lo, p[2]); hi = math.max(hi, p[2]) end
+  -- Cheapest single listings (faint dots). They join the scale unless they're
+  -- wild (under half the line's low); those sit on the bottom edge instead.
+  local lows = ns.lowestHistory(itemID, first)
   local glo, ghi = lo, hi
+  for _, r in ipairs(lows) do if r[2] >= lo * 0.5 then glo = math.min(glo, r[2]) end end
   if vendor then glo = math.min(glo, vendor); ghi = math.max(ghi, vendor) end
   local pad = math.max((ghi - glo) * 0.08, 1)
   local ymin, ymax = niceAxis(math.max(0, glo - pad), ghi + pad)
@@ -523,23 +555,38 @@ function ns.redraw()
     vendorLabel:Show()
   end
 
-  local px, py
+  local lineAt = {}
+  for _, p in ipairs(pts) do lineAt[p[1]] = p[2] end
+  for i, r in ipairs(lows) do
+    if not lineAt[r[1]] or r[2] < lineAt[r[1]] * 0.97 then
+      local f = getFaint(i)
+      f:ClearAllPoints()
+      f:SetPoint("CENTER", area, "BOTTOMLEFT", xOf(r[1] + 0.5), math.max(2, yOf(r[2])))
+      f.label, f.price = ns.dayLabel(r[1]), r[2]
+      f:Show()
+    end
+  end
+
+  local px, py, pm
   for i, p in ipairs(plot) do
     local x, y = xOf(p[1]), yOf(p[2])
     local d = getDot(i)
     d:ClearAllPoints()
     d:SetPoint("CENTER", area, "BOTTOMLEFT", x, y)
-    d.label, d.price, d.vol = p[3], p[2], vols[math.floor(p[1])]
+    d.label, d.price, d.vol, d.market = p[3], p[2], vols[math.floor(p[1])], p[4]
+    d.tex:SetColorTexture(1, 0.82, 0, p[4] and 1 or 0.5)
     d:Show()
     if px then
       local l = getLine(i - 1)
       if l then
         l:SetStartPoint("BOTTOMLEFT", area, px, py)
         l:SetEndPoint("BOTTOMLEFT", area, x, y)
+        -- solid where both ends are market values, dim where we only had the lowest listing
+        l:SetColorTexture(BLUE[1], BLUE[2], BLUE[3], (pm and p[4]) and 0.95 or 0.4)
         l:Show()
       end
     end
-    px, py = x, y
+    px, py, pm = x, y, p[4]
   end
 
   local latest = all[#all]
@@ -555,10 +602,14 @@ function ns.redraw()
     vend = ("   Vendor: |cffffffff%s|r"):format(money(vendor))
     if latest[2] < vendor * 1.15 then vend = vend .. " |cffff9933(AH barely beats vendor)|r" end
   end
+  local rawToday = ns.realmData().items[itemID] and ns.realmData().items[itemID][today]
+  if rawToday and latest[1] == today and latest[3] and rawToday < latest[2] * 0.9 then
+    vend = vend .. ("   |cffbbbbccCheapest listing: %s|r"):format(money(rawToday))
+  end
   local vNow = ns.volume(itemID, today)
   if vNow then vend = vend .. ("   Listed today: |cffffffff%s|r"):format(BreakUpLargeNumbersSafe(vNow)) end
   local age = today - latest[1]
-  stats:SetText(("Latest: |cffffffff%s|r %s%s\nAverage: |cffffffff%s|r   Low: |cffffffff%s|r   High: |cffffffff%s|r%s"):format(
+  stats:SetText(((latest[3] and "Market value" or "Lowest listing") .. ": |cffffffff%s|r %s%s\nAverage: |cffffffff%s|r   Low: |cffffffff%s|r   High: |cffffffff%s|r%s"):format(
     money(latest[2]), age == 0 and "(today)" or ("(" .. age .. "d ago)"), vend,
     money(avg), money(lo), money(hi), change))
 end
