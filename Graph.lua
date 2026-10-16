@@ -853,6 +853,7 @@ local function onTooltip(tt)
   if ah and ah:IsShown() and panel:IsShown() and opt("followHover", true) and tt == GameTooltip then
     if itemID ~= ns.focusID then ns.focus(itemID, "hover") end
   end
+  if ns.onItemTooltip then pcall(ns.onItemTooltip, tt, itemID) end
   if not opt("tooltip", true) then return end
   local s = ns.stats(itemID, 7)
   if not s then return end

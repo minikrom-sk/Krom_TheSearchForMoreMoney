@@ -26,7 +26,7 @@ crew. Auction House price history with graphs, a Deals scanner, and crew sync.
 - Slash: `/money` (alias `/moremoney`). Chat prefix "More Money:". Comm prefix `KromMoreMoney`.
 - TOCs: `.toc`, `_Vanilla.toc` (Interface 11509), `_Camelot.toc` (Interface 16001 = Forever).
   Load order: Libs (LibStub, CallbackHandler, LibDataBroker, LibDBIcon, AceComm-3.0 + ChatThrottleLib,
-  LibDeflate), Core, Graph, Deals, Sync, Import, Options.
+  LibDeflate), Core, Graph, Deals, TooltipGraph, Sync, Import, Options.
 
 ## Files
 - **Core.lua** - settings (`ns.opt`), time helpers (`ns.today()` = floor(GetServerTime/86400),
@@ -40,6 +40,7 @@ crew. Auction House price history with graphs, a Deals scanner, and crew sync.
   scan, category filters, click = open on AH, right-click = graph, throttled Recheck sweep.
 - **Sync.lua** - whitelist-only crew sync over WHISPER via AceComm + LibDeflate.
 - **Import.lua** - one-time import of Auctionator history (CBOR string per realm, own decoder).
+- **TooltipGraph.lua** - mini 7-day graph hanging off item tooltips (market line, vendor line, volume, "Nx vendor" verdict); options tipGraph + tipGraphPos (auto/below/above/right/left).
 - **Options.lua** - Blizzard options panel, minimap button (LibDBIcon), slash commands.
 
 ## Data (SavedVariables `Krom_TheSearchForMoreMoneyDB`, account-wide)

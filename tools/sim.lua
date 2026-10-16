@@ -70,7 +70,7 @@ local function newClient(name, faction)
     end
   end
   local ns = {}
-  for _, f in ipairs({ "Core.lua", "Graph.lua", "Deals.lua", "Sync.lua", "Import.lua", "Options.lua" }) do
+  for _, f in ipairs({ "Core.lua", "Graph.lua", "Deals.lua", "TooltipGraph.lua", "Sync.lua", "Import.lua", "Options.lua" }) do
     load(f)("Krom_TheSearchForMoreMoney", ns)
   end
   -- fire ADDON_LOADED + PLAYER_LOGIN on the event frame
@@ -193,7 +193,7 @@ A.setLastScan({ [2589] = {{3,12},{20,1900}}, [701] = {{10,2},{49,1}} })
 A.showView("deals")
 -- find runner frame: last-created frames with OnUpdate
 local runner
-for _, f in ipairs(A_env.frames) do if f.scripts.OnUpdate and not f.scripts.OnClick then runner = f end end
+for _, f in ipairs(A_env.frames) do if f.scripts.OnUpdate and not f.scripts.OnClick and f ~= A.tipGraph then runner = f end end
 local t = 0
 A_env.GetTime = function() return t end
 -- press recheck: find the button whose OnEnter mentions Recheck - simpler: call through frames with OnClick + text
@@ -225,3 +225,7 @@ print("weekly weeks kept:", nweeks, "daily left:", (function() local n=0 for _ i
 A.record(77, 1500, DAY); A.focusID = 77
 for _, r in ipairs({0, 1, 3}) do A_env.Krom_TheSearchForMoreMoneyDB.range = r; print("range", r, pcall(A.redraw)) end
 local h = A.history(77); print("history points:", #h, "first weekly:", h[1][4], h[1][2])
+-- tooltip mini graph
+A.recordVolume(77, 300, DAY); A.recordMarket(77, 1400, DAY - 2); A.recordMarket(77, 1450, DAY)
+print("tip graph:", pcall(A.onItemTooltip, A_env.GameTooltip, 77), A.tipGraph.shown)
+print("tip graph no data:", pcall(A.onItemTooltip, A_env.GameTooltip, 424242), A.tipGraph.shown)

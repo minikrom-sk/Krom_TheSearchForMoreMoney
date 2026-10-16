@@ -17,6 +17,7 @@ Libs\LibDeflate\LibDeflate.lua
 Core.lua
 Graph.lua
 Deals.lua
+TooltipGraph.lua
 Sync.lua
 Import.lua
 Options.lua

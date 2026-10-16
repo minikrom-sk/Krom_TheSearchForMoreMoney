@@ -79,6 +79,20 @@ local function buildOptions()
   check("Show the price graph beside the Auction House", "showWithAH", true)
   check("Graph follows items you hover while the Auction House is open", "followHover", true)
   check("Add a price line to item tooltips", "tooltip", true)
+  check("Mini price graph with item tooltips (last 7 days, vendor line, volume)", "tipGraph", true)
+  do
+    local LABELS = { auto = "Auto (below, or above near the screen edge)", below = "Below the tooltip",
+      above = "Above the tooltip", right = "Right of the tooltip", left = "Left of the tooltip" }
+    local b = button("", 300, 52, function(self)
+      local list, cur = ns.TIP_POSITIONS, opt("tipGraphPos", "auto")
+      local nxt = list[1]
+      for i, p in ipairs(list) do if p == cur then nxt = list[i % #list + 1] end end
+      Krom_TheSearchForMoreMoneyDB.tipGraphPos = nxt
+      self:SetText("Mini graph: " .. LABELS[nxt])
+    end)
+    refreshers[#refreshers + 1] = function() b:SetText("Mini graph: " .. LABELS[opt("tipGraphPos", "auto")]) end
+    y = y - 30
+  end
 
   -- ---------------- Data ----------------
   heading("Price data")
