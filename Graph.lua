@@ -1,15 +1,23 @@
 -- Krom The Search for More Money - the price graph panel and item tooltip line.
 --
--- The panel docks to the right of the Auction House while it's open, and can
--- also be opened on its own (/money or the minimap button). It shows the focus
--- item: whatever you last searched, or hover while the AH is open.
+-- The panel docks to the right of the Auction House while it's open (same
+-- height as the AH), and can also be opened on its own (/money or the minimap
+-- button). It shows the focus item: whatever you last searched, or hover while
+-- the AH is open.
+--
+-- Graph: lowest price over time (blue), the vendor sell price as a floor
+-- (copper), a tick per day, and finer points per quarter of the day where we
+-- have them. Underneath: how this item's price runs by time of day.
 
 local ADDON, ns = ...
 local opt, say, money = ns.opt, ns.say, ns.money
 
-local W, H = 300, 250                 -- panel size
-local GX, GY, GW, GH = 46, -78, 236, 120 -- graph area (left, top offset, width, height)
+local W, H = 520, 440        -- panel size when not docked (docked: AH height)
+local LEFT, RIGHT = 64, 20   -- graph area margins
+local TOP, BOTTOM = 80, 150  -- graph area: top offset, space kept below it
 local RANGES = { 7, 14, 30, 90 }
+local BLUE = { 0.2, 0.8, 1 }
+local COPPER = { 0.93, 0.55, 0.25 }
 
 local panel = CreateFrame("Frame", "Krom_TheSearchForMoreMoneyPanel", UIParent, BackdropTemplateMixin and "BackdropTemplate" or nil)
 panel:SetSize(W, H)
@@ -28,6 +36,7 @@ panel:EnableMouse(true)
 panel:RegisterForDrag("LeftButton")
 panel:SetScript("OnDragStart", function(self) if not self.docked then self:StartMoving() end end)
 panel:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
+panel:SetScript("OnSizeChanged", function() if ns.redraw then ns.redraw() end end)
 panel:Hide()
 ns.panel = panel
 
@@ -37,9 +46,9 @@ close:SetScript("OnClick", function() panel:Hide(); panel.userClosed = true end)
 
 -- Header: icon, name, lock button
 local icon = panel:CreateTexture(nil, "ARTWORK")
-icon:SetSize(28, 28)
-icon:SetPoint("TOPLEFT", 12, -12)
-local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+icon:SetSize(32, 32)
+icon:SetPoint("TOPLEFT", 14, -12)
+local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
 title:SetPoint("TOPLEFT", icon, "TOPRIGHT", 8, -1)
 title:SetPoint("RIGHT", -60, 0)
 title:SetJustifyH("LEFT")
@@ -70,50 +79,127 @@ end)
 lock:SetScript("OnLeave", function() GameTooltip:Hide() end)
 updateLock()
 
--- Graph area background + grid
+-- Graph area (stretches with the panel)
 local area = CreateFrame("Frame", nil, panel)
-area:SetPoint("TOPLEFT", GX, GY)
-area:SetSize(GW, GH)
+area:SetPoint("TOPLEFT", LEFT, -TOP)
+area:SetPoint("BOTTOMRIGHT", -RIGHT, BOTTOM)
 local bg = area:CreateTexture(nil, "BACKGROUND")
 bg:SetAllPoints()
 bg:SetColorTexture(1, 1, 1, 0.04)
-local grid = {}
-for i = 0, 3 do
+
+local YSTEPS = 4
+local hGrid, yLabels = {}, {}
+for i = 0, YSTEPS do
   local t = area:CreateTexture(nil, "BORDER")
-  t:SetColorTexture(1, 1, 1, 0.08)
+  t:SetColorTexture(1, 1, 1, i == 0 and 0.15 or 0.07)
   t:SetHeight(1)
-  t:SetPoint("LEFT", area, "BOTTOMLEFT", 0, GH * i / 3)
-  t:SetPoint("RIGHT", area, "BOTTOMRIGHT", 0, GH * i / 3)
-  grid[i] = t
-end
-local yLabels = {}
-for i = 0, 3 do
+  hGrid[i] = t
   local fs = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-  fs:SetPoint("RIGHT", area, "BOTTOMLEFT", -4, GH * i / 3)
   fs:SetJustifyH("RIGHT")
   yLabels[i] = fs
 end
-local xLeft = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-xLeft:SetPoint("TOPLEFT", area, "BOTTOMLEFT", 0, -3)
-local xRight = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-xRight:SetPoint("TOPRIGHT", area, "BOTTOMRIGHT", 0, -3)
 local empty = area:CreateFontString(nil, "OVERLAY", "GameFontDisable")
 empty:SetPoint("CENTER")
-empty:SetWidth(GW - 20)
+empty:SetPoint("LEFT", 10, 0)
+empty:SetPoint("RIGHT", -10, 0)
+
+-- Pools: day ticks / labels / day grid lines, price lines, dots
+local pools = { tick = {}, xlabel = {}, vgrid = {}, line = {}, dot = {} }
+local function pooled(kind, i, make)
+  local p = pools[kind]
+  if not p[i] then p[i] = make() end
+  return p[i]
+end
+local function hideAll()
+  for _, p in pairs(pools) do for _, o in pairs(p) do if o then o:Hide() end end end
+end
+local function newTex(layer, r, g, b, a)
+  return function() local t = area:CreateTexture(nil, layer); t:SetColorTexture(r, g, b, a); return t end
+end
+local function getLine(i)
+  return pooled("line", i, function()
+    if not area.CreateLine then return false end
+    local l = area:CreateLine(nil, "ARTWORK")
+    l:SetThickness(2)
+    l:SetColorTexture(BLUE[1], BLUE[2], BLUE[3], 0.9)
+    return l
+  end)
+end
+local function getDot(i)
+  return pooled("dot", i, function()
+    local b = CreateFrame("Button", nil, area)
+    b:SetSize(12, 12)
+    b:SetFrameLevel(area:GetFrameLevel() + 3)
+    local t = b:CreateTexture(nil, "OVERLAY")
+    t:SetSize(5, 5)
+    t:SetPoint("CENTER")
+    t:SetColorTexture(1, 0.82, 0, 1)
+    b.tex = t
+    b:SetScript("OnEnter", function(self)
+      self.tex:SetSize(8, 8)
+      GameTooltip:SetOwner(self, "ANCHOR_TOP")
+      GameTooltip:AddLine(self.label)
+      GameTooltip:AddLine("Lowest: " .. money(self.price), 1, 1, 1)
+      GameTooltip:Show()
+    end)
+    b:SetScript("OnLeave", function(self) self.tex:SetSize(5, 5); GameTooltip:Hide() end)
+    return b
+  end)
+end
+
+-- Vendor price line (the floor)
+local vendorLine = area:CreateTexture(nil, "ARTWORK")
+vendorLine:SetColorTexture(COPPER[1], COPPER[2], COPPER[3], 0.85)
+vendorLine:SetHeight(2)
+local vendorLabel = area:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+vendorLabel:SetTextColor(COPPER[1], COPPER[2], COPPER[3])
+vendorLabel:SetJustifyH("LEFT")
 
 -- Stats line
 local stats = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-stats:SetPoint("TOPLEFT", area, "BOTTOMLEFT", -30, -20)
-stats:SetPoint("RIGHT", -14, 0)
+stats:SetPoint("TOPLEFT", area, "BOTTOMLEFT", -LEFT + 16, -24)
+stats:SetPoint("RIGHT", -16, 0)
 stats:SetJustifyH("LEFT")
-stats:SetSpacing(2)
+stats:SetSpacing(3)
+
+-- Time of day: four bars, each quarter's price vs that day's average
+local tod = CreateFrame("Frame", nil, panel)
+tod:SetPoint("BOTTOMLEFT", 16, 12)
+tod:SetPoint("BOTTOMRIGHT", -16, 12)
+tod:SetHeight(64)
+local todTitle = tod:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+todTitle:SetPoint("TOPLEFT")
+todTitle:SetPoint("RIGHT")
+todTitle:SetJustifyH("LEFT")
+local todNote = tod:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+todNote:SetPoint("TOPLEFT", todTitle, "BOTTOMLEFT", 0, -10)
+todNote:SetPoint("RIGHT")
+todNote:SetJustifyH("LEFT")
+local todCols = {}
+for q = 0, 3 do
+  local col = {}
+  col.name = tod:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  col.bar = tod:CreateTexture(nil, "ARTWORK")
+  col.val = tod:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  todCols[q] = col
+end
+local function layoutTod()
+  local w = (tod:GetWidth() or 480) / 4
+  for q = 0, 3 do
+    local c = todCols[q]
+    c.name:ClearAllPoints(); c.name:SetPoint("TOPLEFT", tod, "TOPLEFT", w * q, -18)
+    c.bar:ClearAllPoints(); c.bar:SetPoint("TOPLEFT", tod, "TOPLEFT", w * q, -34)
+    c.val:ClearAllPoints(); c.val:SetPoint("TOPLEFT", tod, "TOPLEFT", w * q, -46)
+  end
+  return w
+end
 
 -- Range buttons
 local rangeBtns = {}
 for i, days in ipairs(RANGES) do
   local b = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-  b:SetSize(40, 18)
-  b:SetPoint("TOPLEFT", GX - 30 + (i - 1) * 44, -48)
+  b:SetSize(44, 20)
+  b:SetPoint("TOPLEFT", 16 + (i - 1) * 48, -50)
   b:SetText(days .. "d")
   b:SetScript("OnClick", function()
     Krom_TheSearchForMoreMoneyDB.range = days
@@ -122,11 +208,17 @@ for i, days in ipairs(RANGES) do
   rangeBtns[i] = b
 end
 
+-- Legend
+local legend = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+legend:SetPoint("LEFT", rangeBtns[#rangeBtns], "RIGHT", 14, 0)
+legend:SetText(("|cff%02x%02x%02xlowest price|r    |cff%02x%02x%02xvendor price|r"):format(
+  BLUE[1] * 255, BLUE[2] * 255, BLUE[3] * 255, COPPER[1] * 255, COPPER[2] * 255, COPPER[3] * 255))
+
 -- Full scan button (lives here because opening Options closes the AH)
 local SCAN_COOLDOWN = 15 * 60
 local scanBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-scanBtn:SetSize(86, 18)
-scanBtn:SetPoint("TOPRIGHT", -14, -48)
+scanBtn:SetSize(90, 20)
+scanBtn:SetPoint("TOPRIGHT", -16, -50)
 scanBtn:SetText("Full scan")
 local function scanLeft()
   return ns.lastFullScan and math.max(0, SCAN_COOLDOWN - (GetTime() - ns.lastFullScan)) or 0
@@ -160,48 +252,85 @@ scanBtn:SetScript("OnEnter", function(self)
 end)
 scanBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
--- Pools for line segments and hover points
-local lines, dots = {}, {}
-local function getLine(i)
-  if not lines[i] then
-    if area.CreateLine then
-      local l = area:CreateLine(nil, "ARTWORK")
-      l:SetThickness(2)
-      l:SetColorTexture(0.2, 0.8, 1, 0.9)
-      lines[i] = l
-    else
-      lines[i] = false
-    end
-  end
-  return lines[i]
-end
-local function getDot(i)
-  if not dots[i] then
-    local b = CreateFrame("Button", nil, area)
-    b:SetSize(10, 10)
-    local t = b:CreateTexture(nil, "OVERLAY")
-    t:SetSize(5, 5)
-    t:SetPoint("CENTER")
-    t:SetColorTexture(1, 0.82, 0, 1)
-    b.tex = t
-    b:SetScript("OnEnter", function(self)
-      self.tex:SetSize(8, 8)
-      GameTooltip:SetOwner(self, "ANCHOR_TOP")
-      GameTooltip:AddLine(ns.dayLabel(self.day) .. (self.day == ns.today() and " (today)" or ""))
-      GameTooltip:AddLine("Lowest: " .. money(self.price), 1, 1, 1)
-      GameTooltip:Show()
-    end)
-    b:SetScript("OnLeave", function(self) self.tex:SetSize(5, 5); GameTooltip:Hide() end)
-    dots[i] = b
-  end
-  return dots[i]
+local function itemInfo(itemID)
+  local GetInfo = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+  local ok, name, link, quality, _, _, _, _, _, _, tex, sellPrice = pcall(GetInfo, itemID)
+  if not ok then return nil end
+  return name, tex, link, sellPrice
 end
 
-local function itemNameIcon(itemID)
-  local GetInfo = (C_Item and C_Item.GetItemInfo) or GetItemInfo
-  local ok, name, link, quality, _, _, _, _, _, _, tex = pcall(GetInfo, itemID)
-  if not ok then name, tex = nil, nil end
-  return name, tex, link
+-- Round the price axis to steps that read well (1c, 2c, 5c, 10c, 25c...).
+local function niceAxis(lo, hi)
+  local span = math.max(hi - lo, 1)
+  local raw = span / YSTEPS
+  local mag = 10 ^ math.floor(math.log10(raw))
+  local step
+  for _, m in ipairs({ 1, 2, 2.5, 3, 4, 5, 6, 8, 10 }) do
+    step = m * mag
+    if step >= raw then break end
+  end
+  step = math.max(1, math.floor(step + 0.5))
+  local ymin = math.floor(lo / step) * step
+  while ymin + step * YSTEPS < hi do step = step * 2; ymin = math.floor(lo / step) * step end
+  return ymin, ymin + step * YSTEPS
+end
+
+-- Time-of-day summary: how each quarter's price compares with its day's
+-- average, over days where we saw the item in at least two quarters.
+local function timeOfDay(slots)
+  local byDay = {}
+  for _, s in ipairs(slots) do
+    local d = math.floor(s[1] / 4)
+    byDay[d] = byDay[d] or {}
+    byDay[d][s[1] % 4] = s[2]
+  end
+  local sum, n, days = { [0] = 0, 0, 0, 0 }, { [0] = 0, 0, 0, 0 }, 0
+  for _, qs in pairs(byDay) do
+    local tot, c = 0, 0
+    for _, p in pairs(qs) do tot = tot + p; c = c + 1 end
+    if c >= 2 then
+      days = days + 1
+      local avg = tot / c
+      for q, p in pairs(qs) do sum[q] = sum[q] + (p / avg - 1); n[q] = n[q] + 1 end
+    end
+  end
+  local out = {}
+  for q = 0, 3 do out[q] = n[q] > 0 and (sum[q] / n[q] * 100) or nil end
+  return out, days
+end
+
+local function drawTimeOfDay(itemID, first, range)
+  local w = layoutTod()
+  local slots = ns.slotHistory(itemID, first)
+  local pct, days = timeOfDay(slots)
+  local head = ("Time of day  |cff999999(your clock, last %d days)|r"):format(range)
+  todTitle:SetText(head)
+  local maxAbs = 1
+  for q = 0, 3 do if pct[q] then maxAbs = math.max(maxAbs, math.abs(pct[q])) end end
+  for q = 0, 3 do
+    local c = todCols[q]
+    c.name:SetText(ns.QUARTERS[q] .. " |cff777777" .. ({ [0] = "0-6", "6-12", "12-18", "18-24" })[q] .. "|r")
+    if days > 0 and pct[q] then
+      local p = pct[q]
+      c.bar:SetSize(math.max(2, (w - 24) * math.abs(p) / maxAbs), 8)
+      if p <= 0 then c.bar:SetColorTexture(0.4, 0.9, 0.4, 0.9) else c.bar:SetColorTexture(1, 0.45, 0.4, 0.9) end
+      c.bar:Show()
+      c.val:SetText(("%+.1f%%"):format(p))
+      c.val:Show()
+    else
+      c.bar:Hide()
+      c.val:SetText(days > 0 and "|cff777777no data|r" or "")
+    end
+    c.name:SetShown(days > 0)
+  end
+  if days == 0 then
+    todNote:SetText("Collecting... once this item has been seen at two different times of the same day, this shows when it runs cheap (green = cheaper than that day's average, red = pricier).")
+    todNote:Show()
+  else
+    todNote:SetText("")
+    todNote:Hide()
+    todTitle:SetText(head .. ("  |cff999999- %d day%s compared. Green = cheaper.|r"):format(days, days == 1 and "" or "s"))
+  end
 end
 
 function ns.redraw()
@@ -211,8 +340,19 @@ function ns.redraw()
   for i, b in ipairs(rangeBtns) do
     if RANGES[i] == range then b:LockHighlight() else b:UnlockHighlight() end
   end
-  for _, l in ipairs(lines) do if l then l:Hide() end end
-  for _, d in ipairs(dots) do d:Hide() end
+  hideAll()
+  vendorLine:Hide(); vendorLabel:Hide()
+  local GW, GH = area:GetWidth(), area:GetHeight()
+  if not GW or GW <= 0 or not GH or GH <= 0 then GW, GH = W - LEFT - RIGHT, H - TOP - BOTTOM end
+  for i = 0, YSTEPS do
+    local y = GH * i / YSTEPS
+    hGrid[i]:ClearAllPoints()
+    hGrid[i]:SetPoint("LEFT", area, "BOTTOMLEFT", 0, y)
+    hGrid[i]:SetPoint("RIGHT", area, "BOTTOMRIGHT", 0, y)
+    yLabels[i]:ClearAllPoints()
+    yLabels[i]:SetPoint("RIGHT", area, "BOTTOMLEFT", -6, y)
+    yLabels[i]:SetText("")
+  end
 
   if not itemID then
     icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
@@ -221,14 +361,15 @@ function ns.redraw()
     empty:SetText("No item selected")
     empty:Show()
     stats:SetText("")
-    for i = 0, 3 do yLabels[i]:SetText("") end
-    xLeft:SetText(""); xRight:SetText("")
+    tod:Hide()
     return
   end
+  tod:Show()
 
-  local name, tex = itemNameIcon(itemID)
+  local name, tex, _, vendor = itemInfo(itemID)
   icon:SetTexture(tex or "Interface\\Icons\\INV_Misc_QuestionMark")
   title:SetText(name or ("Item " .. itemID))
+  if vendor and vendor <= 0 then vendor = nil end
 
   local today = ns.today()
   local first = today - range + 1
@@ -236,37 +377,89 @@ function ns.redraw()
   local all = ns.history(itemID)
   subtitle:SetText(("%s%d days of data, %d in this range"):format(ns.house == "neutral" and "|cffff9933Neutral AH|r - " or "", #all, #pts))
 
+  -- x axis: fractional days from `first` to the end of today
+  local span = range
+  local function xOf(dayf) return (dayf - first) / span * GW end
+
+  -- day ticks + labels
+  local every = range <= 7 and 1 or range <= 14 and 2 or range <= 30 and 5 or 15
+  local li = 0
+  for d = first, today do
+    local i = d - first + 1
+    local x = xOf(d)
+    local t = pooled("tick", i, newTex("BORDER", 1, 1, 1, 0.3))
+    t:ClearAllPoints(); t:SetSize(1, 4); t:SetPoint("TOP", area, "BOTTOMLEFT", x, 0); t:Show()
+    local labeled = (today - d) % every == 0
+    if labeled then
+      local g = pooled("vgrid", i, newTex("BORDER", 1, 1, 1, 0.05))
+      g:ClearAllPoints(); g:SetWidth(1)
+      g:SetPoint("TOP", area, "TOPLEFT", x, 0); g:SetPoint("BOTTOM", area, "BOTTOMLEFT", x, 0); g:Show()
+      li = li + 1
+      local fs = pooled("xlabel", li, function() return panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall") end)
+      fs:ClearAllPoints()
+      fs:SetPoint("TOP", area, "BOTTOMLEFT", every == 1 and xOf(d + 0.5) or x, -6)
+      fs:SetText(d == today and "today" or ns.dayLabel(d))
+      fs:Show()
+    end
+  end
+
+  drawTimeOfDay(itemID, first, range)
+
   if #pts == 0 then
     empty:SetText(#all > 0 and "No prices in this range - try a longer one." or "No prices recorded yet.\nSearch for it in the Auction House.")
     empty:Show()
     stats:SetText("")
-    for i = 0, 3 do yLabels[i]:SetText("") end
-    xLeft:SetText(ns.dayLabel(first)); xRight:SetText("today")
     return
   end
   empty:Hide()
+
+  -- Points: quarter-of-day points where we have them, else one per day.
+  local slots = ns.slotHistory(itemID, first)
+  local haveSlotDay = {}
+  local plot = {}
+  for _, s in ipairs(slots) do
+    local df = ns.slotDay(s[1])
+    haveSlotDay[math.floor(df)] = true
+    plot[#plot + 1] = { df, s[2], ns.dayLabel(math.floor(df)) .. " " .. ns.QUARTERS[s[1] % 4]:lower() }
+  end
+  for _, p in ipairs(pts) do
+    if not haveSlotDay[p[1]] then
+      plot[#plot + 1] = { p[1] + 0.5, p[2], ns.dayLabel(p[1]) .. (p[1] == today and " (today)" or "") }
+    end
+  end
+  table.sort(plot, function(a, b) return a[1] < b[1] end)
 
   local lo, hi, sum = math.huge, 0, 0
   for _, p in ipairs(pts) do
     lo = math.min(lo, p[2]); hi = math.max(hi, p[2]); sum = sum + p[2]
   end
-  local pad = math.max((hi - lo) * 0.12, hi * 0.05, 1)
-  local ymin, ymax = math.max(0, lo - pad), hi + pad
-  for i = 0, 3 do yLabels[i]:SetText(money(ymin + (ymax - ymin) * i / 3)) end
-  xLeft:SetText(ns.dayLabel(first)); xRight:SetText("today")
+  for _, p in ipairs(plot) do lo = math.min(lo, p[2]); hi = math.max(hi, p[2]) end
+  local glo, ghi = lo, hi
+  if vendor then glo = math.min(glo, vendor); ghi = math.max(ghi, vendor) end
+  local pad = math.max((ghi - glo) * 0.08, 1)
+  local ymin, ymax = niceAxis(math.max(0, glo - pad), ghi + pad)
+  for i = 0, YSTEPS do yLabels[i]:SetText(money(ymin + (ymax - ymin) * i / YSTEPS)) end
+  local function yOf(price) return (price - ymin) / (ymax - ymin) * GH end
 
-  local function pos(day, price)
-    local x = (range > 1) and ((day - first) / (range - 1)) * GW or GW / 2
-    local y = (price - ymin) / (ymax - ymin) * GH
-    return x, y
+  if vendor then
+    local y = yOf(vendor)
+    vendorLine:ClearAllPoints()
+    vendorLine:SetPoint("LEFT", area, "BOTTOMLEFT", 0, y)
+    vendorLine:SetPoint("RIGHT", area, "BOTTOMRIGHT", 0, y)
+    vendorLine:Show()
+    vendorLabel:ClearAllPoints()
+    vendorLabel:SetPoint("BOTTOMLEFT", area, "BOTTOMLEFT", 4, y + 3)
+    vendorLabel:SetText("vendor " .. money(vendor))
+    vendorLabel:Show()
   end
+
   local px, py
-  for i, p in ipairs(pts) do
-    local x, y = pos(p[1], p[2])
+  for i, p in ipairs(plot) do
+    local x, y = xOf(p[1]), yOf(p[2])
     local d = getDot(i)
     d:ClearAllPoints()
     d:SetPoint("CENTER", area, "BOTTOMLEFT", x, y)
-    d.day, d.price = p[1], p[2]
+    d.label, d.price = p[3], p[2]
     d:Show()
     if px then
       local l = getLine(i - 1)
@@ -287,9 +480,14 @@ function ns.redraw()
     local col = pct > 0.5 and "|cffff6060" or pct < -0.5 and "|cff60ff60" or "|cffcccccc"
     change = ("   %s%+.0f%%|r over %dd"):format(col, pct, range)
   end
+  local vend = ""
+  if vendor then
+    vend = ("   Vendor: |cffffffff%s|r"):format(money(vendor))
+    if latest[2] < vendor * 1.15 then vend = vend .. " |cffff9933(AH barely beats vendor)|r" end
+  end
   local age = today - latest[1]
-  stats:SetText(("Latest: |cffffffff%s|r %s\nAverage: |cffffffff%s|r   Low: |cffffffff%s|r   High: |cffffffff%s|r%s"):format(
-    money(latest[2]), age == 0 and "(today)" or ("(" .. age .. "d ago)"),
+  stats:SetText(("Latest: |cffffffff%s|r %s%s\nAverage: |cffffffff%s|r   Low: |cffffffff%s|r   High: |cffffffff%s|r%s"):format(
+    money(latest[2]), age == 0 and "(today)" or ("(" .. age .. "d ago)"), vend,
     money(avg), money(lo), money(hi), change))
 end
 
@@ -299,9 +497,11 @@ local function dock()
   panel:ClearAllPoints()
   if ah and ah:IsShown() then
     panel:SetPoint("TOPLEFT", ah, "TOPRIGHT", 4, 0)
+    panel:SetSize(W, math.max(H, math.floor(ah:GetHeight() or H)))
     panel.docked = true
   else
     panel:SetPoint("CENTER")
+    panel:SetSize(W, H)
     panel.docked = false
   end
 end

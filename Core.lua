@@ -5,6 +5,12 @@
 --   Krom_TheSearchForMoreMoneyDB.realms[realmKey].items[itemID][day] = copper
 -- "day" = whole days since 1970 in server time, so the whole crew buckets alike.
 --
+-- Prices you see live are also kept per quarter of YOUR day (night 0-6,
+-- morning 6-12, afternoon 12-18, evening 18-24), for 30 days:
+--   ...realms[realmKey].slots[itemID][slot] = copper
+-- "slot" = 6-hour blocks since 1970 in your local time. That's what the
+-- time-of-day chart and the finer graph points are made from.
+--
 -- Works with both Auction House systems: the modern one (C_AuctionHouse) and
 -- the classic one (QueryAuctionItems). Anything that searches the AH - you,
 -- Auctionator, a full scan - gets recorded.
@@ -27,6 +33,19 @@ local opt = ns.opt
 -- ---------------------------------------------------------------------------
 function ns.now() return (GetServerTime and GetServerTime()) or time() end
 function ns.today() return math.floor(ns.now() / 86400) end
+-- Seconds your clock is ahead of UTC (for local time-of-day slots).
+local function tzOffset()
+  local t = time()
+  local l, u = date("*t", t), date("!*t", t)
+  u.isdst = l.isdst
+  return time(l) - time(u)
+end
+ns.tzOffset = tzOffset
+function ns.slotNow() return math.floor((ns.now() + tzOffset()) / 21600) end
+-- A slot's middle as a fractional (UTC) day, for placing it on the graph.
+function ns.slotDay(slot) return (slot * 21600 + 10800 - tzOffset()) / 86400 end
+ns.QUARTERS = { [0] = "Night", "Morning", "Afternoon", "Evening" }
+
 function ns.dayLabel(day)
   local d = date("!*t", day * 86400)
   return ("%d/%d"):format(d.month, d.day)
@@ -98,8 +117,18 @@ function ns.record(itemID, unitPrice, day, key)
   itemID, unitPrice = tonumber(itemID), tonumber(unitPrice)
   if not itemID or not unitPrice or unitPrice <= 0 then return false end
   unitPrice = math.floor(unitPrice + 0.5)
+  local live = day == nil
   day = day or ns.today()
-  local items = ns.realmData(key).items
+  local realm = ns.realmData(key)
+  if live then
+    -- seen right now: also file it under this quarter of the day
+    realm.slots = realm.slots or {}
+    local s = realm.slots[itemID]
+    if not s then s = {}; realm.slots[itemID] = s end
+    local slot = ns.slotNow()
+    if not s[slot] or unitPrice < s[slot] then s[slot] = unitPrice end
+  end
+  local items = realm.items
   local hist = items[itemID]
   if not hist then hist = {}; items[itemID] = hist end
   local old = hist[day]
@@ -115,6 +144,19 @@ function ns.history(itemID, sinceDay, key)
   if not hist then return out end
   for day, price in pairs(hist) do
     if not sinceDay or day >= sinceDay then out[#out + 1] = { day, price } end
+  end
+  table.sort(out, function(a, b) return a[1] < b[1] end)
+  return out
+end
+
+-- Time-of-day points for an item: sorted list of { slot, price } since a day.
+function ns.slotHistory(itemID, sinceDay, key)
+  local realm = ns.realmData(key)
+  local s = realm.slots and realm.slots[itemID]
+  local out = {}
+  if not s then return out end
+  for slot, price in pairs(s) do
+    if not sinceDay or ns.slotDay(slot) >= sinceDay then out[#out + 1] = { slot, price } end
   end
   table.sort(out, function(a, b) return a[1] < b[1] end)
   return out
@@ -140,6 +182,13 @@ function ns.prune()
         if day < cutoff then hist[day] = nil; removed = removed + 1 end
       end
       if next(hist) == nil then realm.items[itemID] = nil end
+    end
+    local slotCutoff = ns.slotNow() - opt("keepSlotDays", 30) * 4
+    for itemID, s in pairs(realm.slots or {}) do
+      for slot in pairs(s) do
+        if slot < slotCutoff then s[slot] = nil end
+      end
+      if next(s) == nil then realm.slots[itemID] = nil end
     end
   end
   return removed
@@ -338,6 +387,13 @@ ev:SetScript("OnEvent", function(_, event, arg1)
     if house == "neutral" and not ns.toldNeutral then
       ns.toldNeutral = true
       say(("neutral auction house (%s) - its prices are kept separate from your faction's. Wrong? /money house faction"):format(UnitName("npc") or "auctioneer"))
+    end
+    -- Picking a row in the modern AH's browse list: graph that item.
+    if AuctionHouseFrame and AuctionHouseFrame.SelectBrowseResult and not ns.hookedSelect then
+      ns.hookedSelect = true
+      hooksecurefunc(AuctionHouseFrame, "SelectBrowseResult", function(_, r)
+        if type(r) == "table" and r.itemKey then ns.focus(r.itemKey.itemID, "search") end
+      end)
     end
     if ns.onAHShow then ns.onAHShow() end
   elseif event == "AUCTION_HOUSE_CLOSED" then
