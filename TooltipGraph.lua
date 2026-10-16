@@ -159,15 +159,8 @@ local function draw(itemID)
   local latest = pts[#pts]
   local age = today - latest[1]
   head:SetText(("|cff33ccff%s|r %s"):format(money(latest[2]), age == 0 and "today" or (age .. "d ago")))
-  if vendor then
-    local x = latest[2] / vendor
-    local col = x >= 1.5 and "|cff66ee66" or x >= 1.1 and "|cffeeee66" or "|cffff7766"
-    local word = x >= 1.1 and ("%sx vendor"):format(x >= 10 and ("%d"):format(x) or ("%.1f"):format(x)) or "barely beats vendor"
-    if x < 1 then word = "vendor it" end
-    verdict:SetText(col .. word .. "|r")
-  else
-    verdict:SetText("|cff999999no vendor price|r")
-  end
+  local col, word = ns.verdict(latest[2], vendor, itemID)
+  verdict:SetText(col and (col .. word .. "|r") or "|cff999999no vendor price|r")
   footL:SetText(ns.dayLabel(first))
   local vNow = ns.volume(itemID, latest[1])
   footR:SetText((vNow and ("|cff9d80f2" .. bigNum(vNow) .. " listed|r  ") or "") .. "today")

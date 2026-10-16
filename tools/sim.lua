@@ -229,3 +229,7 @@ local h = A.history(77); print("history points:", #h, "first weekly:", h[1][4], 
 A.recordVolume(77, 300, DAY); A.recordMarket(77, 1400, DAY - 2); A.recordMarket(77, 1450, DAY)
 print("tip graph:", pcall(A.onItemTooltip, A_env.GameTooltip, 77), A.tipGraph.shown)
 print("tip graph no data:", pcall(A.onItemTooltip, A_env.GameTooltip, 424242), A.tipGraph.shown)
+-- verdicts (stub stack size = 1 from fake GetItemInfo's 8th return)
+for _, c in ipairs({ {40,5}, {7,6}, {33000,30000}, {5,6}, {130,100} }) do
+  print("verdict", c[1], c[2], select(2, A.verdict(c[1], c[2], 1)))
+end

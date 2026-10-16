@@ -786,7 +786,8 @@ function ns.redraw()
   local vend = ""
   if vendorPrice then
     vend = ("   Vendor: |cffffffff%s|r"):format(money(vendorPrice))
-    if latest[2] < vendorPrice * 1.15 then vend = vend .. " |cffff9933(AH barely beats vendor)|r" end
+    local col, word = ns.verdict(latest[2], vendorPrice, itemID)
+    if col then vend = vend .. " " .. col .. "(" .. word .. ")|r" end
   end
   local rawToday = ns.realmData().items[itemID] and ns.realmData().items[itemID][today]
   if rawToday and latest[1] == today and latest[3] and rawToday < latest[2] * 0.9 then

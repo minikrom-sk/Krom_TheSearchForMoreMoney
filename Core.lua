@@ -123,6 +123,28 @@ local function notify(itemID)
   for _, fn in ipairs(ns.listeners) do pcall(fn, itemID) end
 end
 
+-- Is it worth posting on the AH or just vendoring? Judged on money, not a
+-- ratio: the AH keeps 5%, so extra = 95% of the price minus the vendor
+-- price, and it's weighed per full stack (1.1x vendor on a 3g item is
+-- +13s; on a 6c item it's pocket lint). Returns colour code, short text.
+function ns.verdict(price, vendor, itemID)
+  if not price or not vendor or vendor <= 0 then return nil end
+  local GetInfo = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+  local ok, _, _, _, _, _, _, _, stack = pcall(GetInfo, itemID)
+  stack = (ok and tonumber(stack) and stack > 0) and stack or 1
+  local extra = price * 0.95 - vendor
+  local perStack = extra * stack
+  local each = ns.money(math.abs(extra))
+  if extra <= 0 then
+    return "|cffff7766", "Vendor it - AH nets less"
+  elseif perStack < 20 then
+    return "|cffff9933", "Vendor it - only +" .. each .. " each"
+  elseif perStack < 100 then
+    return "|cffeeee66", "Meh - +" .. each .. " each"
+  end
+  return "|cff66ee66", "Post it - +" .. each .. " each"
+end
+
 -- Keep the lower of what's stored and `price` in t[itemID][k]. True if changed.
 local function keepLowest(t, itemID, k, price)
   local h = t[itemID]
