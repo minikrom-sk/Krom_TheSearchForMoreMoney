@@ -267,6 +267,8 @@ SlashCmdList.KROMMOREMONEY = function(msg)
     local wl = Krom_TheSearchForMoreMoneyDB.whitelist
     say(#wl > 0 and ("crew: " .. table.concat(wl, ", ")) or "your crew list is empty.")
     say(("this session: sent %d prices, received %d new."):format(ns.syncStats.sent, ns.syncStats.got))
+  elseif cmd == "deals" then
+    ns.showPanel(); ns.showView("deals")
   elseif cmd == "house" then
     local arg = rest:lower()
     if arg == "neutral" or arg == "faction" or arg == "auto" then
@@ -292,6 +294,6 @@ SlashCmdList.KROMMOREMONEY = function(msg)
   elseif tonumber(cmd) then
     ns.showPanel(tonumber(cmd))
   else
-    say("commands: /money (graph), /money <item link>, /money scan, /money sync, /money add Name, /money remove Name, /money crew, /money import, /money house, /money options")
+    say("commands: /money (graph), /money <item link>, /money scan, /money sync, /money add Name, /money remove Name, /money crew, /money deals, /money import, /money house, /money options")
   end
 end

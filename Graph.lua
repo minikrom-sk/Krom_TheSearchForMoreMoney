@@ -40,25 +40,58 @@ panel:SetScript("OnSizeChanged", function() if ns.redraw then ns.redraw() end en
 panel:Hide()
 ns.panel = panel
 
+-- Views: the panel shows one at a time (Graph, Deals, ...), picked with tabs
+-- under the panel. Each view is a frame covering the whole panel.
+ns.views = {}
+local tabs = {}
+function ns.showView(name)
+  if not ns.views[name] then name = "graph" end
+  Krom_TheSearchForMoreMoneyDB.view = name
+  for n, v in pairs(ns.views) do v.frame:SetShown(n == name) end
+  for _, t in ipairs(tabs) do
+    if t.view == name then t:LockHighlight(); t:SetAlpha(1) else t:UnlockHighlight(); t:SetAlpha(0.75) end
+  end
+  local v = ns.views[name]
+  if v.onShow then v.onShow() end
+end
+function ns.addView(name, label, frame, onShow)
+  ns.views[name] = { frame = frame, onShow = onShow }
+  local t = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+  t:SetSize(90, 22)
+  t:SetPoint("TOPLEFT", panel, "BOTTOMLEFT", 8 + #tabs * 94, 2)
+  t:SetText(label)
+  t.view = name
+  t:SetScript("OnClick", function() ns.showView(name) end)
+  tabs[#tabs + 1] = t
+  frame:SetShown(false)
+end
+function ns.currentView()
+  local v = opt("view", "graph")
+  return ns.views[v] and v or "graph"
+end
+
+local gv = CreateFrame("Frame", nil, gv)
+gv:SetAllPoints()
+
 local close = CreateFrame("Button", nil, panel, "UIPanelCloseButton")
 close:SetPoint("TOPRIGHT", 2, 2)
 close:SetScript("OnClick", function() panel:Hide(); panel.userClosed = true end)
 
 -- Header: icon, name, lock button
-local icon = panel:CreateTexture(nil, "ARTWORK")
+local icon = gv:CreateTexture(nil, "ARTWORK")
 icon:SetSize(32, 32)
 icon:SetPoint("TOPLEFT", 14, -12)
-local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+local title = gv:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
 title:SetPoint("TOPLEFT", icon, "TOPRIGHT", 8, -1)
 title:SetPoint("RIGHT", -60, 0)
 title:SetJustifyH("LEFT")
 title:SetWordWrap(false)
-local subtitle = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+local subtitle = gv:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 subtitle:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -3)
 subtitle:SetPoint("RIGHT", -16, 0)
 subtitle:SetJustifyH("LEFT")
 
-local lock = CreateFrame("Button", nil, panel)
+local lock = CreateFrame("Button", nil, gv)
 lock:SetSize(20, 20)
 lock:SetPoint("RIGHT", close, "LEFT", 0, 0)
 local lockTex = lock:CreateTexture(nil, "ARTWORK")
@@ -80,7 +113,7 @@ lock:SetScript("OnLeave", function() GameTooltip:Hide() end)
 updateLock()
 
 -- Graph area (stretches with the panel)
-local area = CreateFrame("Frame", nil, panel)
+local area = CreateFrame("Frame", nil, gv)
 area:SetPoint("TOPLEFT", LEFT, -TOP)
 area:SetPoint("BOTTOMRIGHT", -RIGHT, BOTTOM)
 local bg = area:CreateTexture(nil, "BACKGROUND")
@@ -94,7 +127,7 @@ for i = 0, YSTEPS do
   t:SetColorTexture(1, 1, 1, i == 0 and 0.15 or 0.07)
   t:SetHeight(1)
   hGrid[i] = t
-  local fs = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  local fs = gv:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
   fs:SetJustifyH("RIGHT")
   yLabels[i] = fs
 end
@@ -194,7 +227,7 @@ vendorLabel:SetTextColor(COPPER[1], COPPER[2], COPPER[3])
 vendorLabel:SetJustifyH("LEFT")
 
 -- Stats line
-local stats = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+local stats = gv:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 stats:SetPoint("TOPLEFT", area, "BOTTOMLEFT", -LEFT + 16, -24)
 stats:SetPoint("RIGHT", -16, 0)
 stats:SetJustifyH("LEFT")
@@ -204,7 +237,7 @@ stats:SetSpacing(3)
 -- Each bar = how that slot's price compares with its own day's (or week's)
 -- average. Green = cheaper than usual, red = pricier.
 local function makeRow(n, bottom)
-  local row = CreateFrame("Frame", nil, panel)
+  local row = CreateFrame("Frame", nil, gv)
   row:SetPoint("BOTTOMLEFT", 16, bottom)
   row:SetPoint("BOTTOMRIGHT", -16, bottom)
   row:SetHeight(58)
@@ -265,7 +298,7 @@ end
 -- Range buttons
 local rangeBtns = {}
 for i, days in ipairs(RANGES) do
-  local b = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+  local b = CreateFrame("Button", nil, gv, "UIPanelButtonTemplate")
   b:SetSize(44, 20)
   b:SetPoint("TOPLEFT", 16 + (i - 1) * 48, -50)
   b:SetText(days .. "d")
@@ -282,43 +315,48 @@ legend:SetPoint("TOPLEFT", area, "TOPLEFT", 6, -4)
 legend:SetText(("|cff%02x%02x%02xmarket value|r  |cffbbbbccdots = cheapest|r  |cff%02x%02x%02xvendor|r  |cffaaaabbbars = listed|r"):format(
   BLUE[1] * 255, BLUE[2] * 255, BLUE[3] * 255, COPPER[1] * 255, COPPER[2] * 255, COPPER[3] * 255))
 
--- Full scan button (lives here because opening Options closes the AH)
+-- Full scan button (lives on the panel because opening Options closes the AH).
+-- A builder, so every view can have one; they share the cooldown.
 local SCAN_COOLDOWN = 15 * 60
-local scanBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-scanBtn:SetSize(90, 20)
-scanBtn:SetPoint("TOPRIGHT", -16, -50)
-scanBtn:SetText("Full scan")
 local function scanLeft()
   return ns.lastFullScan and math.max(0, SCAN_COOLDOWN - (GetTime() - ns.lastFullScan)) or 0
 end
-local function updateScanBtn()
-  local ah = ns.ahFrame() and ns.ahFrame():IsShown()
-  local left = scanLeft()
-  if left > 0 then
-    scanBtn:SetText(("%d:%02d"):format(math.floor(left / 60), math.floor(left % 60)))
-  else
-    scanBtn:SetText("Full scan")
+function ns.makeScanButton(parent)
+  local scanBtn = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+  scanBtn:SetSize(90, 20)
+  scanBtn:SetText("Full scan")
+  local function updateScanBtn()
+    local ah = ns.ahFrame() and ns.ahFrame():IsShown()
+    local left = scanLeft()
+    if left > 0 then
+      scanBtn:SetText(("%d:%02d"):format(math.floor(left / 60), math.floor(left % 60)))
+    else
+      scanBtn:SetText("Full scan")
+    end
+    scanBtn:SetEnabled(ah and left == 0 and true or false)
   end
-  scanBtn:SetEnabled(ah and left == 0 and true or false)
+  local tick = 0
+  scanBtn:SetScript("OnUpdate", function(_, e)
+    tick = tick + e
+    if tick >= 0.5 then tick = 0; updateScanBtn() end
+  end)
+  scanBtn:SetScript("OnClick", function()
+    if ns.startFullScan() then ns.lastFullScan = GetTime() end
+    updateScanBtn()
+  end)
+  scanBtn:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:AddLine("Full scan")
+    GameTooltip:AddLine("Records every listing on the Auction House. The game allows one every 15 minutes.", 1, 1, 1, true)
+    if scanLeft() > 0 then GameTooltip:AddLine("Ready again when the timer runs out.", 1, 0.8, 0.2, true) end
+    if not (ns.ahFrame() and ns.ahFrame():IsShown()) then GameTooltip:AddLine("Open the Auction House first.", 1, 0.3, 0.3, true) end
+    GameTooltip:Show()
+  end)
+  scanBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  return scanBtn
 end
-local tick = 0
-scanBtn:SetScript("OnUpdate", function(_, e)
-  tick = tick + e
-  if tick >= 0.5 then tick = 0; updateScanBtn() end
-end)
-scanBtn:SetScript("OnClick", function()
-  if ns.startFullScan() then ns.lastFullScan = GetTime() end
-  updateScanBtn()
-end)
-scanBtn:SetScript("OnEnter", function(self)
-  GameTooltip:SetOwner(self, "ANCHOR_TOP")
-  GameTooltip:AddLine("Full scan")
-  GameTooltip:AddLine("Records the lowest price of everything on the Auction House. The game allows one every 15 minutes.", 1, 1, 1, true)
-  if scanLeft() > 0 then GameTooltip:AddLine("Ready again when the timer runs out.", 1, 0.8, 0.2, true) end
-  if not (ns.ahFrame() and ns.ahFrame():IsShown()) then GameTooltip:AddLine("Open the Auction House first.", 1, 0.3, 0.3, true) end
-  GameTooltip:Show()
-end)
-scanBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+local scanBtn = ns.makeScanButton(gv)
+scanBtn:SetPoint("TOPRIGHT", -16, -50)
 
 local function itemInfo(itemID)
   local GetInfo = (C_Item and C_Item.GetItemInfo) or GetItemInfo
@@ -392,7 +430,7 @@ local function drawPatterns(itemID)
 end
 
 function ns.redraw()
-  if not panel:IsShown() then return end
+  if not panel:IsShown() or not gv:IsShown() then return end
   local itemID = ns.focusID
   local range = opt("range", 30)
   for i, b in ipairs(rangeBtns) do
@@ -477,7 +515,7 @@ function ns.redraw()
     end
     if text then
       li = li + 1
-      local fs = pooled("xlabel", li, function() return panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall") end)
+      local fs = pooled("xlabel", li, function() return gv:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall") end)
       fs:ClearAllPoints()
       fs:SetPoint("TOP", area, "BOTTOMLEFT", at, -6)
       fs:SetText(text)
@@ -634,7 +672,7 @@ function ns.showPanel(itemID)
   dock()
   panel.userClosed = false
   panel:Show()
-  ns.redraw()
+  ns.showView(itemID and "graph" or ns.currentView())
 end
 
 ns.onFocus = function() ns.redraw() end
@@ -645,7 +683,7 @@ ns.onAHShow = function()
   if opt("showWithAH", true) then
     dock()
     panel:Show()
-    ns.redraw()
+    ns.showView(ns.currentView())
   end
 end
 ns.onAHHide = function()
@@ -655,6 +693,8 @@ end
 -- ---------------------------------------------------------------------------
 -- Tooltips: a price line on every item; hovering with the AH open focuses it.
 -- ---------------------------------------------------------------------------
+ns.addView("graph", "Price graph", gv, function() ns.redraw() end)
+
 local function onTooltip(tt)
   if not tt or not tt.GetItem then return end
   local ok, _, link = pcall(tt.GetItem, tt)

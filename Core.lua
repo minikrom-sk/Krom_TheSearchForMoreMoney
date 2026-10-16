@@ -192,6 +192,21 @@ function ns.marketValue(ladder)
   return mean
 end
 
+-- Every listing from the last full scan (this session only), for scanners
+-- like the Deals tab:  ns.lastScan = { when = time, house = ..., ladders = { [itemID] = { {unit, count}, ... } } }
+-- Fresh searches of one item replace that item's ladder.
+function ns.setLastScan(ladders)
+  ns.lastScan = { when = ns.now(), house = ns.realmKey(), ladders = ladders }
+  if ns.onScanUpdated then ns.onScanUpdated() end
+end
+local function refreshLastScan(itemID, ladder)
+  local s = ns.lastScan
+  if s and s.house == ns.realmKey() and s.ladders[itemID] then
+    s.ladders[itemID] = ladder
+    if ns.onScanUpdated then ns.onScanUpdated(itemID) end
+  end
+end
+
 -- Record a whole price ladder for an item seen right now.
 function ns.recordLadder(itemID, ladder)
   if #ladder == 0 then return false end
@@ -358,6 +373,7 @@ local function onCommodity(itemID)
     end
   end
   if ns.recordLadder(itemID, ladder) then recorded = recorded + 1 end
+  refreshLastScan(itemID, ladder)
   if C_AuctionHouse.GetCommoditySearchResultsQuantity then
     local okq, q = pcall(C_AuctionHouse.GetCommoditySearchResultsQuantity, itemID)
     if okq then ns.recordVolume(itemID, q) end
@@ -379,6 +395,7 @@ local function onItemSearch(itemKey)
     end
   end
   if ns.recordLadder(itemKey.itemID, ladder) then recorded = recorded + 1 end
+  refreshLastScan(itemKey.itemID, ladder)
   ns.recordVolume(itemKey.itemID, qty)
   ns.focus(itemKey.itemID, "search")
   notify(itemKey.itemID)
@@ -413,6 +430,7 @@ local function processClassicList(isFull)
       if isFull then
         for id, q in pairs(counts) do ns.recordVolume(id, q) end
         for id, l in pairs(ladders) do if ns.recordLadder(id, l) then recorded = recorded + 1 end end
+        ns.setLastScan(ladders)
       end
       batchDone(isFull and "Full scan" or nil)
     end
@@ -447,6 +465,7 @@ local function processReplicate()
     if i < n then C_Timer.After(0, slice) else
       for id, q in pairs(counts) do ns.recordVolume(id, q) end
       for id, l in pairs(ladders) do if ns.recordLadder(id, l) then recorded = recorded + 1 end end
+      ns.setLastScan(ladders)
       batchDone("Full scan")
     end
   end
