@@ -162,6 +162,16 @@ function ns.importAuctionator(dryRun)
             end
           end
         end
+        -- "a" = how many were listed that day
+        if not dryRun and type(entry.a) == "table" then
+          for aDay, q in pairs(entry.a) do
+            local d = tonumber(aDay)
+            local ourDay = d and ((d < 10000) and (d + offset) or d)
+            if ourDay and ourDay >= keepFrom and ourDay <= ns.today() then
+              ns.recordVolume(itemID, tonumber(q), ourDay, ns.realmKey("faction"))
+            end
+          end
+        end
         local got = false
         if next(byDay) then
           for d, price in pairs(byDay) do

@@ -8,7 +8,10 @@
 -- Prices you see live are also kept per quarter of YOUR day (night 0-6,
 -- morning 6-12, afternoon 12-18, evening 18-24), for 30 days:
 --   ...realms[realmKey].slots[itemID][slot] = copper
--- "slot" = 6-hour blocks since 1970 in your local time. That's what the
+-- "slot" = 6-hour blocks since 1970 in your local time.
+--
+-- Volume (how many are listed) per item per day, the most seen that day:
+--   ...realms[realmKey].vol[itemID][day] = count That's what the
 -- time-of-day chart and the finer graph points are made from.
 --
 -- Works with both Auction House systems: the modern one (C_AuctionHouse) and
@@ -46,10 +49,15 @@ function ns.slotNow() return math.floor((ns.now() + tzOffset()) / 21600) end
 function ns.slotDay(slot) return (slot * 21600 + 10800 - tzOffset()) / 86400 end
 ns.QUARTERS = { [0] = "Night", "Morning", "Afternoon", "Evening" }
 
+local MONTHS = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" }
+ns.WEEKDAYS = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" }
+-- "Oct 13"
 function ns.dayLabel(day)
   local d = date("!*t", day * 86400)
-  return ("%d/%d"):format(d.month, d.day)
+  return MONTHS[d.month] .. " " .. d.day
 end
+-- 1 = Sunday ... 7 = Saturday
+function ns.weekday(day) return date("!*t", day * 86400).wday end
 
 -- Which auction house prices belong to. Your faction's AH and the neutral
 -- (goblin) AHs are separate markets, so they're stored separately:
@@ -149,6 +157,24 @@ function ns.history(itemID, sinceDay, key)
   return out
 end
 
+-- How many were up for sale. Keeps the day's highest count (a full scan sees
+-- everything; a single search can see less).
+function ns.recordVolume(itemID, qty, day, key)
+  itemID, qty = tonumber(itemID), tonumber(qty)
+  if not itemID or not qty or qty <= 0 then return end
+  day = day or ns.today()
+  local realm = ns.realmData(key)
+  realm.vol = realm.vol or {}
+  local v = realm.vol[itemID]
+  if not v then v = {}; realm.vol[itemID] = v end
+  if not v[day] or qty > v[day] then v[day] = math.floor(qty) end
+end
+function ns.volume(itemID, day, key)
+  local realm = ns.realmData(key)
+  local v = realm.vol and realm.vol[itemID]
+  return v and v[day]
+end
+
 -- Time-of-day points for an item: sorted list of { slot, price } since a day.
 function ns.slotHistory(itemID, sinceDay, key)
   local realm = ns.realmData(key)
@@ -182,6 +208,10 @@ function ns.prune()
         if day < cutoff then hist[day] = nil; removed = removed + 1 end
       end
       if next(hist) == nil then realm.items[itemID] = nil end
+    end
+    for itemID, v in pairs(realm.vol or {}) do
+      for day in pairs(v) do if day < cutoff then v[day] = nil end end
+      if next(v) == nil then realm.vol[itemID] = nil end
     end
     local slotCutoff = ns.slotNow() - opt("keepSlotDays", 30) * 4
     for itemID, s in pairs(realm.slots or {}) do
@@ -231,6 +261,7 @@ local function onBrowse()
     if r.itemKey and r.minPrice and ns.record(r.itemKey.itemID, r.minPrice) then
       recorded = recorded + 1; any = r.itemKey.itemID
     end
+    if r.itemKey and r.totalQuantity then ns.recordVolume(r.itemKey.itemID, r.totalQuantity) end
   end
   if any then notify(any) end
   batchDone()
@@ -242,6 +273,10 @@ local function onCommodity(itemID)
   if ok and info and info.unitPrice and ns.record(itemID, info.unitPrice) then
     recorded = recorded + 1
   end
+  if C_AuctionHouse.GetCommoditySearchResultsQuantity then
+    local okq, q = pcall(C_AuctionHouse.GetCommoditySearchResultsQuantity, itemID)
+    if okq then ns.recordVolume(itemID, q) end
+  end
   ns.focus(itemID, "search")
   notify(itemID)
   batchDone()
@@ -250,15 +285,17 @@ end
 local function onItemSearch(itemKey)
   if type(itemKey) ~= "table" then return end
   local n = C_AuctionHouse.GetNumItemSearchResults and C_AuctionHouse.GetNumItemSearchResults(itemKey) or 1
-  local best
-  for i = 1, math.min(n or 1, 50) do
+  local best, qty = nil, 0
+  for i = 1, n or 1 do
     local ok, info = pcall(C_AuctionHouse.GetItemSearchResultInfo, itemKey, i)
-    if ok and info and info.buyoutAmount and info.buyoutAmount > 0 then
+    if ok and info then qty = qty + (info.quantity or 1) end
+    if i <= 50 and ok and info and info.buyoutAmount and info.buyoutAmount > 0 then
       local unit = info.buyoutAmount / math.max(1, info.quantity or 1)
       if not best or unit < best then best = unit end
     end
   end
   if best and ns.record(itemKey.itemID, best) then recorded = recorded + 1 end
+  ns.recordVolume(itemKey.itemID, qty)
   ns.focus(itemKey.itemID, "search")
   notify(itemKey.itemID)
   batchDone()
@@ -271,17 +308,22 @@ ns.fullScan = fullScan
 local function processClassicList(isFull)
   local n = GetNumAuctionItems and GetNumAuctionItems("list") or 0
   if n == 0 then return end
-  local i = 1
+  local i, counts = 1, {}
   local function slice()
     local stop = math.min(n, i + 499)
     for j = i, stop do
       local _, _, count, _, _, _, _, _, _, buyout, _, _, _, _, _, _, itemID = GetAuctionItemInfo("list", j)
+      if itemID then counts[itemID] = (counts[itemID] or 0) + (count or 1) end
       if itemID and buyout and buyout > 0 and ns.record(itemID, buyout / math.max(1, count or 1)) then
         recorded = recorded + 1
       end
     end
     i = stop + 1
-    if i <= n then C_Timer.After(0, slice) else batchDone(isFull and "Full scan" or nil) end
+    if i <= n then C_Timer.After(0, slice) else
+      -- only a full scan sees everything; one search page would undercount
+      if isFull then for id, q in pairs(counts) do ns.recordVolume(id, q) end end
+      batchDone(isFull and "Full scan" or nil)
+    end
   end
   slice()
 end
@@ -298,17 +340,21 @@ end
 -- Modern full scan: ReplicateItems, then read the replicate list in slices.
 local function processReplicate()
   local n = C_AuctionHouse.GetNumReplicateItems() or 0
-  local i = 0
+  local i, counts = 0, {}
   local function slice()
     local stop = math.min(n - 1, i + 499)
     for j = i, stop do
       local _, _, count, _, _, _, _, _, _, buyout, _, _, _, _, _, _, itemID = C_AuctionHouse.GetReplicateItemInfo(j)
+      if itemID then counts[itemID] = (counts[itemID] or 0) + (count or 1) end
       if itemID and buyout and buyout > 0 and ns.record(itemID, buyout / math.max(1, count or 1)) then
         recorded = recorded + 1
       end
     end
     i = stop + 1
-    if i < n then C_Timer.After(0, slice) else batchDone("Full scan") end
+    if i < n then C_Timer.After(0, slice) else
+      for id, q in pairs(counts) do ns.recordVolume(id, q) end
+      batchDone("Full scan")
+    end
   end
   if n > 0 then slice() end
 end
