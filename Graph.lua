@@ -70,7 +70,7 @@ function ns.currentView()
   return ns.views[v] and v or "graph"
 end
 
-local gv = CreateFrame("Frame", nil, gv)
+local gv = CreateFrame("Frame", nil, panel)
 gv:SetAllPoints()
 
 local close = CreateFrame("Button", nil, panel, "UIPanelCloseButton")
